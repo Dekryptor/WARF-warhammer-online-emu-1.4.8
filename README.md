@@ -1,2 +1,0 @@
-# WARF
-warhammer online emulator
