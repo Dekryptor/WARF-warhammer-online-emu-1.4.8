@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Reflection;
@@ -33,13 +14,36 @@ namespace FrameWork
         public string Username = "root";
         public string Password = "password";
         public string Custom = "Treat Tiny As Boolean=False";
+        public string Catalog = "";
+        public string IPAddress = "";
+        public bool MultipleActiveResultSets = false;
+
+        public ConnectionType ConnectionType= ConnectionType.DATABASE_MYSQL;
 
         public string Total()
         {
             string Result = "";
-            Result += "Server=" + Server + ";";
-            Result += "Port=" + Port + ";";
-            Result += "Database=" + Database + ";";
+
+            if (ConnectionType == ConnectionType.DATABASE_MYSQL)
+            {
+                Result += "Server=" + Server + ";";
+                Result += "Port=" + Port + ";";
+                Result += "Database=" + Database + ";";
+            }
+            else if (ConnectionType == ConnectionType.DATABASE_MSSQL)
+            {
+                if (IPAddress.Length > 0)
+                {
+                    Result += "Data Source=" + IPAddress + "," + Port + ";";
+                    Result += "Network Library=DBMSSOCN;";
+                }
+                else
+                    Result += "Server=" + Server + "," + Port + ";";
+
+                Result += "Initial Catalog=" + Catalog + ";";
+                if(MultipleActiveResultSets)
+                    Result += "MultipleActiveResultSets=" + MultipleActiveResultSets + ";";
+            }
             Result += "User Id=" + Username + ";";
             Result += "Password=" + Password + ";";
             Result += Custom;
@@ -52,21 +56,20 @@ namespace FrameWork
     {
         private readonly FileInfo _file = new FileInfo("sql.conf");
 
-        public static MySQLObjectDatabase Start(string sqlconfig, ConnectionType Type, string DBName)
+        public static IObjectDatabase Start(string sqlconfig, ConnectionType Type, string databaseName, string schemaName)
         {
-            Log.Debug("DBManager", DBName + "->Start " + sqlconfig + "...");
+            Log.Debug("IObjectDatabase", databaseName + "->Start " + sqlconfig + "...");
             IObjectDatabase _database = null;
 
             try
             {
-                _database = ObjectDatabase.GetObjectDatabase(Type, sqlconfig);
+                _database = ObjectDatabase.GetObjectDatabase(Type, sqlconfig, schemaName);
                 if (_database == null)
                     return null;
 
-                List<Type> Registereds = null;
-                LoadTables(_database, DBName, ref Registereds);
+                LoadTables(_database,databaseName);
 
-                return (MySQLObjectDatabase)_database;
+                return _database;
             }
             catch
             {
@@ -74,8 +77,9 @@ namespace FrameWork
             }
         }
 
-        static public void LoadTables(IObjectDatabase Database,string DatabaseName, ref List<Type> Registereds)
+        public static void LoadTables(IObjectDatabase Database,string DatabaseName)
         {
+            List<string> typeNames = new List<string>();
             foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
                 foreach (Type type in assembly.GetTypes())
@@ -88,34 +92,17 @@ namespace FrameWork
                         DataTable[] attrib = (DataTable[])type.GetCustomAttributes(typeof(DataTable), true);
                         if (attrib.Length > 0 && attrib[0].DatabaseName == DatabaseName)
                         {
-                            Log.Info("DBManager", "Registering table: " + type.FullName);
                             Database.RegisterDataObject(type);
-
-                            if (Registereds != null)
-                                Registereds.Add(type);
+                            typeNames.Add(type.Name);
                         }
                     }
                     catch(Exception e)
                     {
-                        Log.Error("DBManager", "Can not load : " + e.ToString());
+                        Log.Error("DBManager", "Can not load : " + e);
                     }
                 }
             }
+            Log.Info("DBManager", "Registered table: " + string.Join(", ", typeNames));
         }
-
-        public static XMLObjectDatabase Start(string XmlFolder, string DatabaseName, ref List<Type> Registereds)
-        {
-            Log.Debug("DBManager", "Starting XML Database : " + XmlFolder);
-
-            XMLObjectDatabase database = ObjectDatabase.GetObjectDatabase(ConnectionType.DATABASE_XML, XmlFolder) as XMLObjectDatabase;
-
-            if (database == null)
-                return null;
-
-            LoadTables(database, DatabaseName, ref Registereds);
-            
-            return database;
-        }
-
     }
 }

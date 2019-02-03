@@ -1,34 +1,110 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using System.IO;
+using System.Threading;
 
 namespace FrameWork
 {
-    static public class Log
+    public static class Log
     {
-        static private LogConfig _config = new LogConfig();
-        static public LogConfig Config
+        private static readonly Encoding encoding = new UTF8Encoding(true);
+
+        private static LogConfig _config = new LogConfig();
+        private static Thread _thread;
+
+        private class Entry
+        {
+            public string Name, Message;
+            public DateTime Time;
+            public ConsoleColor Color;
+        };
+
+        private static List<Entry> _entries = new List<Entry>();
+        private static ManualResetEventSlim _entriesEvent = new ManualResetEventSlim(false);
+        private static object _writeLock = new object();
+
+        static bool isMono = Type.GetType("Mono.Runtime") != null;
+
+        static Entry getNextEntry()
+        {
+            while (true)
+            {
+                _entriesEvent.Wait();
+
+                lock (_writeLock)
+                {
+                    if (_entries.Count > 0)
+                    {
+                        // Get the next entry
+                        Entry entry = _entries[0];
+                        _entries.RemoveAt(0);
+
+                        // If we ran out of log entries, reset the event
+                        if (_entries.Count == 0)
+                            _entriesEvent.Reset();
+
+                        return entry;
+                    }
+                    else
+                    {
+                        // Woke up for no reason, reset the event so it doesn't happen again
+                        _entriesEvent.Reset();
+                    }
+                }
+            }
+        }
+
+        private static void threadStart()
+        {
+            while (true)
+            {
+                try
+                {
+                    Entry entry = getNextEntry();
+
+                    if (entry != null)
+                        Output(entry.Name, entry.Message, entry.Color);
+                }
+                catch
+                {
+                    // Can't safely output anything
+                }
+            }
+        }
+
+        static void AdjustConsoleHeight()
+        {
+            int h = Console.WindowWidth - 20;
+            if (Console.BufferHeight != h)
+                Console.BufferHeight = h;
+        }
+
+        private static void Output(string name, string message, ConsoleColor color)
+        {
+            Output(name, message, color, DateTime.UtcNow);
+        }
+
+        private static void Output(string name, string message, ConsoleColor color, DateTime time)
+        {
+            string text = "[" + time.ToString("HH:mm:ss") + "] " + name + " : " + message;
+
+            if (!isMono)
+                AdjustConsoleHeight();
+
+            Console.ForegroundColor = color;
+            Console.WriteLine(text);
+            Console.ForegroundColor = ConsoleColor.White;
+
+            if (DumpFile != null && FSDump != null)
+            {
+                byte[] info = encoding.GetBytes(text + "\n");
+                FSDump.Write(info, 0, info.Length);
+                FSDump.Flush();
+            }
+        }
+
+        public static LogConfig Config
         {
             get
             {
@@ -36,15 +112,15 @@ namespace FrameWork
             }
         }
 
-        static private FileInfo DumpFile = null;
-        static private FileStream FSDump = null;
+        private static FileInfo DumpFile;
+        private static FileStream FSDump;
 
-        static public void Init(LogConfig Config)
+        public static void Init(LogConfig Config)
         {
             InitInstance(Config);
         }
 
-        static public bool InitLog(string LogConf, string PrefileName)
+        public static bool InitLog(string LogConf, string PrefileName)
         {
             try
             {
@@ -54,27 +130,27 @@ namespace FrameWork
                 if (LogConf.Length > 0)
                     Conf.LoadInfoFromFile(LogConf);
 
-                Log.Init(Conf);
+                Init(Conf);
             }
             catch (Exception e)
             {
-                Log.Error("InitLog", "Error : " + e.ToString());
+                Error("InitLog", "Error : " + e);
                 return false;
             }
 
-            Log.Notice("InitLog", "Logger initialized");
+            Notice("InitLog", "Logger initialized");
             return true;
         }
 
-        static public bool InitLog(LogInfo Info, string PrefileName)
+        public static bool InitLog(LogInfo Info, string PrefileName)
         {
             LogConfig Config = new LogConfig(Info);
             Config.PreFileName = PrefileName;
-            Log.Init(Config);
+            Init(Config);
             return true;
         }
 
-        static public void InitInstance(LogConfig Config)
+        public static void InitInstance(LogConfig Config)
         {
             try
             {
@@ -95,7 +171,7 @@ namespace FrameWork
                 }
 
                 FileDir += "/" + Config.PreFileName + Config.FileName;
-                BackDir += "/" + Config.PreFileName + "." + DateTime.Now.Hour + "h." + DateTime.Now.Minute + "m." + DateTime.Now.Second + "s" + Config.FileName;
+                BackDir += "/" + Config.PreFileName + "." + DateTime.UtcNow.Hour + "h." + DateTime.UtcNow.Minute + "m." + DateTime.UtcNow.Second + "s" + Config.FileName;
 
                 if (DumpFile == null)
                 {
@@ -113,7 +189,6 @@ namespace FrameWork
 
                 if (Config != null)
                     _config = Config;
-
             }
             catch (Exception)
             {
@@ -122,27 +197,32 @@ namespace FrameWork
                 if (Config != null)
                     Config.Info.Dump = false;
             }
+
+            _thread = new Thread(threadStart);
+            _thread.IsBackground = true; // Detach the thread so it won't block exit
+            _thread.Priority = ThreadPriority.BelowNormal;
+            _thread.Start();
         }
 
-        public static void Texte(string name, string message, ConsoleColor Color)
+        public static void Texte(string name, string message, ConsoleColor Color, bool sync = false)
         {
-            lock (_config)
+            if (sync)
             {
-                string Texte = "[" + DateTime.Now.ToString("HH:mm:ss") + "] " + name + " : " + message;
+                Output(name, message, Color);
+            }
+            else
+            {
+                Entry e = new Entry();
+                e.Name = name;
+                e.Message = message;
+                e.Color = Color;
 
-
-                Console.BufferHeight = Console.WindowWidth - 20;
-                Console.ForegroundColor = Color;
-                Console.WriteLine(Texte);
-                Console.ForegroundColor = ConsoleColor.White;
-
-                if (DumpFile != null && FSDump != null)
+                lock (_writeLock)
                 {
-                    byte[] info = new UTF8Encoding(true).GetBytes(Texte+"\n");
-                    FSDump.Write(info, 0, info.Length);
-                    FSDump.Flush();
+                    e.Time = DateTime.UtcNow;
+                    _entries.Add(e);
+                    _entriesEvent.Set();
                 }
-
             }
         }
 
@@ -154,40 +234,40 @@ namespace FrameWork
             }
         }
 
-        public static void Info(string name,string message)
+        public static void Info(string name, string message, bool sync = false)
         {
             if (_config.Info.Info)
-                Texte("I "+name, message, ConsoleColor.White);
+                Texte("I "+name, message, ConsoleColor.White, sync);
         }
 
-        public static void Success(string name, string message)
+        public static void Success(string name, string message, bool sync = false)
         {
             if (_config.Info.Successs)
-                Texte("S " + name, message, ConsoleColor.Green);
+                Texte("S " + name, message, ConsoleColor.Green, sync);
         }
 
-        public static void Notice(string name, string message)
+        public static void Notice(string name, string message, bool sync = false)
         {
             if (_config.Info.Notice)
-                Texte("N " + name, message, ConsoleColor.Yellow);
+                Texte("N " + name, message, ConsoleColor.Yellow, sync);
         }
 
-        public static void Error(string name, string message)
+        public static void Error(string name, string message, bool sync = false)
         {
             if (_config.Info.Error)
-                Texte("E " + name, message, ConsoleColor.Red);
+                Texte("E " + name, message, ConsoleColor.Red, sync);
         }
 
-        public static void Debug(string name, string message)
+        public static void Debug(string name, string message, bool sync = false)
         {
             if (_config.Info.Debug)
-                Texte("D " + name, message, ConsoleColor.Blue);
+                Texte("D " + name, message, ConsoleColor.Blue, sync);
         }
 
-        public static void Dump(string name, string message)
+        public static void Dump(string name, string message, bool sync = false)
         {
             if (_config.Info.Dump)
-                Texte("D " + name, message, ConsoleColor.Gray);
+                Texte("D " + name, message, ConsoleColor.Gray, sync);
         }
 
         public static bool CanDump()
@@ -195,43 +275,43 @@ namespace FrameWork
             return _config.Info.Dump;
         }
 
-        public static void Tcp(string name, MemoryStream Packet, bool Force = false)
+        public static void Tcp(string name, MemoryStream Packet, bool Force = false, bool sync = false)
         {
             if (Force || _config.Info.Tcp)
             {
                 byte[] Buff = Packet.ToArray();
-                Texte("P " + name, Hex(Buff, 0, Buff.Length), ConsoleColor.Gray);
+                Texte("P " + name, Hex(Buff, 0, Buff.Length), ConsoleColor.Gray, sync);
             }
         }
 
-        public static void Tcp(string name, byte[] dump, int start, int len, bool Force=false)
+        public static void Tcp(string name, byte[] dump, int start, int len, bool Force=false, bool sync = false)
         {
             if (Force || _config.Info.Tcp)
-                Texte("P " + name, Hex(dump, start, len), ConsoleColor.Gray);
+                Texte("P " + name, Hex(dump, start, len), ConsoleColor.Gray, sync);
         }
 
-        public static void Dump(string name, MemoryStream Packet, bool Force = false)
+        public static void Dump(string name, MemoryStream Packet, bool Force = false, bool sync = false)
         {
             if (Force || _config.Info.Dump)
             {
                 byte[] Buff = Packet.ToArray();
-                Texte("U " + name, Hex(Buff, 0, Buff.Length), ConsoleColor.Gray);
+                Texte("U " + name, Hex(Buff, 0, Buff.Length), ConsoleColor.Gray, sync);
             }
         }
 
-        public static void Dump(string name, byte[] dump, int start, int len, bool Force = false)
+        public static void Dump(string name, byte[] dump, int start, int len, bool Force = false, bool sync = false)
         {
             if (_config.Info.Dump)
-                Texte("U " + name, Hex(dump,start,len), ConsoleColor.Gray);
+                Texte("U " + name, Hex(dump,start,len), ConsoleColor.Gray, sync);
         }
 
-        public static void Compare(string Name, byte[] First, byte[] Second)
+        public static void Compare(string Name, byte[] First, byte[] Second, bool sync = false)
         {
             if (_config.Info.Dump)
                 return;
 
             if (First.Length != Second.Length)
-                Log.Error("Name", "First.Length(" + First.Length + ") != Second.Length(" + Second.Length + ")");
+                Error("Name", "First.Length(" + First.Length + ") != Second.Length(" + Second.Length + ")");
 
             StringBuilder hex = new StringBuilder();
 
@@ -326,7 +406,7 @@ namespace FrameWork
                 }
             }
 
-            Texte("C " + Name, hex.ToString(), ConsoleColor.Gray);
+            Texte("C " + Name, hex.ToString(), ConsoleColor.Gray, sync);
         }
 
         public static string Hex(byte[] dump, int start, int len)
@@ -367,13 +447,13 @@ namespace FrameWork
                         }
                     }
                     hex.Append("  ");
-                    hex.Append("//"+text.ToString());
-                    hexDump.Append(hex.ToString());
+                    hex.Append("//"+text);
+                    hexDump.Append(hex);
                 }
             }
             catch (Exception e)
             {
-                Log.Error("HexDump", e.ToString());
+                Error("HexDump", e.ToString());
             }
 
             return hexDump.ToString();

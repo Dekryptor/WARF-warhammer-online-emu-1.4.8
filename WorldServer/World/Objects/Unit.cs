@@ -1,235 +1,329 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-
 using Common;
 using FrameWork;
+using GameData;
+using WarZoneLib;
 
 namespace WorldServer
 {
+    public enum StateOpcode
+    {
+        None = 0,
+        Wireframe = 1,
+        Flight = 2,
+        RvRFlag = 4,
+        RenownTitle = 8,
+        Lootable = 9,
+        ToKTitle = 0xC,
+        ZoneEntry = 0x11,
+        Down = 19,
+        Combat = 0x1A,
+        CastCompletion = 0x1B,
+        Butcherable = 0x1F,
+        Scavengeable = 0x20,
+        SiegeIdleTimer = 0x21,
+        Stunned = 0x23,
+        HelmCloak = 0x24
+    };
+
+    public class XpRenown
+    {
+        public uint XP { get; set; }
+        public uint Renown { get; set; }
+        public uint Damage { get; set; }
+        public long LastUpdatedTime { get; set; }
+        public ushort InfluenceId { get; }
+        public ushort Influence { get; set; }
+
+
+        public XpRenown(uint xp, uint renown, ushort infId, ushort inf, long lastUpdatedTime)
+        {
+            XP = xp;
+            Renown = renown;
+            InfluenceId = infId;
+            Influence = inf;
+            LastUpdatedTime = lastUpdatedTime;
+        }
+
+        public void Add(uint xp, uint renown, ushort inf)
+        {
+            XP += xp;
+            Renown += renown;
+            Influence += inf;
+        }
+
+        public override string ToString()
+        {
+            return $"XPR:XP:{XP} RP:{Renown} INF:{Influence} DMG:{Damage} TIME:{LastUpdatedTime}";
+        }
+    }
+
     public class Unit : Object
     {
         #region Static
 
-        static public int HEALTH_REGEN_TIME = 4000; // 4secondes
-        static public int ACTION_REGEN_TIME = 1000; // 1seconde
-        static public int STATE_INTERVAL = 10000; // 10secondes
+        public static int HEALTH_REGEN_TIME = 4000; // 4secondes
+        public static int ACTION_REGEN_TIME = 1000; // 1seconde
+        public static int CR_REGEN_TIME = 1000;
 
-        static public GameData.InteractType GenerateInteractType(UInt16 Title)
+        public static InteractType GenerateInteractType(Creature_proto proto)
         {
-            GameData.InteractType Type = GameData.InteractType.INTERACTTYPE_IDLE_CHAT;
+            InteractType type = InteractType.INTERACTTYPE_IDLE_CHAT;
 
-            switch (Title)
+            switch (proto.TitleId)
             {
-                case 1: goto case 40;
-                case 2: goto case 40;
-                case 3: goto case 40;
-                case 40:
-                    Type = GameData.InteractType.INTERACTTYPE_TRAINER;
+                case CreatureTitle.RallyMaster:
+                    type = InteractType.INTERACTTYPE_BINDER;
                     break;
 
-                case 18: goto case 131;
-                case 131:
-                    Type = GameData.InteractType.INTERACTTYPE_FLIGHT_MASTER;
+                case CreatureTitle.Apothecary:
+                case CreatureTitle.Butcher:
+                case CreatureTitle.Cultivator:
+                case CreatureTitle.Salvager:
+                case CreatureTitle.Scavenger:
+                case CreatureTitle.HedgeWizard:
+                case CreatureTitle.Trainer:
+                case CreatureTitle.CareerTrainer:
+                case CreatureTitle.RenownTrainer:
+                case CreatureTitle.ApprenticeCareerTrainer:
+                case CreatureTitle.ApprenticeRenownTrainer:
+                    type = InteractType.INTERACTTYPE_TRAINER;
                     break;
 
-                case 10: goto case 135;
-                case 11: goto case 135;
-                case 12: goto case 135;
-                case 13: goto case 135;
-                case 14: goto case 135;
-                case 15: goto case 135;
-                case 16: goto case 135;
-                case 31: goto case 135;
-                case 34: goto case 135;
-                case 115: goto case 135;
-                case 116: goto case 135;
-                case 117: goto case 135;
-                case 118: goto case 135;
-                case 119: goto case 135;
-                case 120: goto case 135;
-                case 121: goto case 135;
-                case 122: goto case 135;
-                case 125: goto case 135;
-                case 126: goto case 135;
-                case 127: goto case 135;
-                case 128: goto case 135;
-                case 129: goto case 135;
-                case 130: goto case 135;
-                case 135:
-                    Type = GameData.InteractType.INTERACTTYPE_DYEMERCHANT;
+                case CreatureTitle.FlightMaster:
+                case CreatureTitle.ExpeditionQuartermaster:
+                    type = InteractType.INTERACTTYPE_FLIGHT_MASTER;
                     break;
-                case 144: goto case 40;
+                case CreatureTitle.GuildRegistrar:
+                    type = InteractType.INTERACTTYPE_GUILD_REGISTRAR;
+                    break;
+                case CreatureTitle.Healer:
+                    type = InteractType.INTERACTTYPE_HEALER;
+                    break;
+                case CreatureTitle.Banker:
+                    type = InteractType.INTERACTTYPE_BANKER;
+                    break;
 
-            };
+                case CreatureTitle.Auctioneer:
+                    type = InteractType.INTERACTTYPE_AUCTIONEER;
+                    break;
 
-            return Type;
+                case CreatureTitle.NameRegistrar:
+                    type = InteractType.INTERACTTYPE_LASTNAMESHOP;
+                    break;
+
+                case CreatureTitle.VaultKeeper:
+                    type = InteractType.INTERACTTYPE_GUILD_VAULT;
+                    break;
+
+                case CreatureTitle.Merchant:
+                case CreatureTitle.ArmorMerchant:
+                case CreatureTitle.WeaponMerchant:
+                case CreatureTitle.CampMerchant:
+                case CreatureTitle.SiegeWeaponMerchant:
+                case CreatureTitle.CraftSupplyMerchant:
+                case CreatureTitle.RenownGearMerchant:
+                case CreatureTitle.Quartermaster:
+                case CreatureTitle.BasicRenownGearMerchant:
+                case CreatureTitle.VeteranRenownGearMerchant:
+                case CreatureTitle.AdvancedRenownGearMerchant:
+                case CreatureTitle.RecruitMedallionQuartermaster:
+                case CreatureTitle.ScoutMedallionQuartermaster:
+                case CreatureTitle.SoldierMedallionQuartermaster:
+                case CreatureTitle.OfficerMedallionQuartermaster:
+                case CreatureTitle.RoyalQuartermaster:
+                case CreatureTitle.RecruitEmblemQuartermaster:
+                case CreatureTitle.ScoutEmblemQuartermaster:
+                case CreatureTitle.SoldierEmblemQuartermaster:
+                case CreatureTitle.OfficerEmblemQuartermaster:
+                case CreatureTitle.VanquisherQuartermaster:
+                case CreatureTitle.VerySpecialDyeVendor:
+                case CreatureTitle.SpecializedArmorsmith:
+                case CreatureTitle.RenownArmorQuartermaster:
+                case CreatureTitle.RenownWeaponQuartermaster:
+                case CreatureTitle.CommoditiesQuartermaster:
+                case CreatureTitle.TomeTacticLibrarian:
+                case CreatureTitle.TomeTrophyLibrarian:
+                case CreatureTitle.EliteRenownGearMerchant:
+                case CreatureTitle.UpgradeMerchant:
+                case CreatureTitle.DoorRepairMerchant:
+                case CreatureTitle.StandardMerchant:
+                case CreatureTitle.TomeAccessoryLibrarian:
+                case CreatureTitle.TomeTokenLibrarian:
+                case CreatureTitle.TalismanMerchant:
+                case CreatureTitle.MountVendor:
+                case CreatureTitle.CompanionKeeper:
+                case CreatureTitle.NoveltyVendor:
+                case CreatureTitle.Librarian:
+                case CreatureTitle.RecordsKeeper:
+                    type = InteractType.INTERACTTYPE_DYEMERCHANT;
+                    break;
+
+                case CreatureTitle.LightMountVendor:
+                case CreatureTitle.HeavyMountVendor:
+                case CreatureTitle.SpecialtyMountWrangler:
+                    type = InteractType.INTERACTTYPE_STORE;
+                    break;
+
+                case CreatureTitle.BarberSurgeon:
+                    type = InteractType.INTERACTTYPE_BARBER_SURGEON;
+                    break;
+            }
+
+            return type;
         }
 
         #endregion
 
         public List<byte> States = new List<byte>();
-        public GameData.InteractType InteractType = GameData.InteractType.INTERACTTYPE_IDLE_CHAT;
+        public InteractType InteractType = InteractType.INTERACTTYPE_IDLE_CHAT;
 
         public Point3D SpawnPoint = new Point3D(0, 0, 0);
-        public UInt16 SpawnHeading = 0;
-        public bool StateDirty = false;
-        public bool IsInvinsible = false;
+        public Point3D WorldSpawnPoint = new Point3D(0, 0, 0);
+        public ushort SpawnHeading;
+        public bool StateDirty;
+
+        /// <summary>Indicates that a unit cannot suffer damage.</summary>
+        public bool IsInvulnerable = false;
+
+        /// <summary>The ID of a model to use as this player's mount.</summary>
+        public ushort MountID { get; protected set; }
+        /// <summary>Mount armor for medium mounts.</summary>
+        public ushort MountArmor { get; protected set; }
+
+        public bool CanMount { get; set; } = true;
 
         public Unit()
-            : base()
         {
-            ItmInterface = AddInterface < ItemsInterface>();
-            CbtInterface = AddInterface<CombatInterface>();
+            ItmInterface = AddInterface<ItemsInterface>();
+            CbtInterface = (CombatInterface) AddInterface(CombatInterface.GetInterfaceFor(this));
             StsInterface = AddInterface<StatsInterface>();
             QtsInterface = AddInterface<QuestsInterface>();
             MvtInterface = AddInterface<MovementInterface>();
             AbtInterface = AddInterface<AbilityInterface>();
+            BuffInterface = AddInterface<BuffInterface>();
             AiInterface = AddInterface<AIInterface>();
+            OSInterface = AddInterface<ObjectStateInterface>();
         }
 
         public override void OnLoad()
         {
-            SpawnPoint.X = X;
-            SpawnPoint.Y = Y;
-            SpawnPoint.Z = Z;
+            SaveSpawnData();
+
+            LoadInterfaces();
+        }
+ 
+        protected void SaveSpawnData()
+        {
+            SpawnPoint.SetCoordsFrom(this);
             SpawnHeading = Heading;
-            base.OnLoad();
-            StateDirty = false;
+            WorldSpawnPoint.SetCoordsFrom(WorldPosition);
         }
 
-        public override void Dispose()
-        {
-            base.Dispose();
-        }
-        public override void Update(long Tick)
+        /// <summary>
+        /// Repeater interval to send F_OBJECT_STATE in order to maintain an object on the clients.
+        /// The client holds an object for 1 minute, so we send a repeater close to that lastUpdatedTime.
+        /// </summary>
+        private readonly int _stateInterval = 40000 + StaticRandom.Instance.Next(10000);
+
+        public override void Update(long tick)
         {
             if (!IsDead)
             {
-                UpdateHealth(Tick);
-                UpdateActionPoints(Tick);
-                UpdateSpeed(Tick);
+                UpdateHealth(tick);
+                SendCollatedHit();
             }
 
-            if (NextSend < Tick)
+            if (_nextSend < tick)
             {
-                NextSend = Tick + STATE_INTERVAL;
+                _nextSend = tick + _stateInterval;
                 StateDirty = true;
             }
 
-            base.Update(Tick);
-
             if (StateDirty)
             {
-                NextSend = Tick + STATE_INTERVAL;
+                _nextSend = tick + _stateInterval;
                 StateDirty = false;
-                SendState(null);
+                SendState();
             }
+
+            base.Update(tick);
         }
 
         #region Sender
 
-        private long NextSend = 0;
+        private long _nextSend;
 
-        public override void SendMeTo(Player Plr)
+        public override void SendMeTo(Player plr)
         {
-            ItmInterface.SendEquiped(Plr);
-            SendState(Plr);
-            MvtInterface.CurrentMount.SendMount(Plr);
-            base.SendMeTo(Plr);
+            /*if (Plr.CrrInterface is IPetCareerInterface && Plr.CrrInterface.GetTargetOfInterest() != null)
+                (Plr.CrrInterface.GetTargetOfInterest() as Pet).SendPet(2);*/
+            ItmInterface.SendEquipped(plr);
+            SendState(plr);
+            OSInterface.SendObjectStates(plr);
+            base.SendMeTo(plr);
+            if (MountID != 0)
+                SendMount(plr);
+            SendGfxMods();
         }
 
-        public virtual void SendState(Player Plr, ushort TargetX, ushort TargetY, ushort TargetZ, byte MovementType)
+        public virtual void SendMovementState(Player player, ushort targetX, ushort targetY, ushort targetZ, bool isRun)
         {
-            PacketOut Out = new PacketOut((byte)Opcodes.F_OBJECT_STATE);
+            PacketOut Out = new PacketOut((byte) Opcodes.F_OBJECT_STATE, 28);
             Out.WriteUInt16(Oid);
-            Out.WriteUInt16((ushort)X);
-            Out.WriteUInt16((ushort)Y);
-            Out.WriteUInt16((ushort)Z);
+            Out.WriteUInt16((ushort) X);
+            Out.WriteUInt16((ushort) Y);
+            Out.WriteUInt16((ushort) Z);
             Out.WriteByte(PctHealth);
-            Out.WriteByte(MovementType); // Movement Type 0 None, 1 Walk, 2 ?, 3 Run
-            Out.WriteByte((byte)Zone.ZoneId);
-            Out.Fill(0, 4);
+            // Possibly flags:
+            // 1: Destination position update (Rotation update if 0)
+            // 2: Look-at target
+            // 16: States
+            // 32: No Gravity
+            // 40: Recall state
+            byte flags = 1;
+            if (CbtInterface.GetCurrentTarget() != null)
+                flags |= 2;
+            Out.WriteByte(flags);
+            Out.WriteByte((byte) Zone.ZoneId);
+            Out.WriteByte(0); // Unk1
+            Out.WriteUInt32(0); // Unk2
 
-            if(MovementType < 3)
-                Out.WriteUInt16(0x55);
+            /*if (isRun)
+                Out.WriteUInt16R(0xEB);
             else
-                Out.WriteUInt16(0XEB); // ? 0XEB
+                Out.WriteUInt16R(0x55);*/
+            Out.WriteUInt16R((ushort)(Speed * 2.35f));
 
-            Out.WriteByte(0);
-            Out.WriteUInt16(0x75); // ? 0xCE
+            Out.WriteByte(0); // DestUnk
+            Out.WriteUInt16R(targetX);
+            Out.WriteUInt16R(targetY);
+            Out.WriteUInt16R(targetZ);
+            Out.WriteByte((byte) Zone.ZoneId);
+            if ((flags & 2) == 2)
+            Out.WriteUInt16R(CbtInterface.GetCurrentTarget()?.Oid ?? 0);
 
-            Out.WriteUInt16(TargetX);
-            Out.WriteUInt16(TargetY);
-            Out.WriteByte(0);
-            Out.WriteByte((byte)Zone.ZoneId);
-            Out.WriteUInt16(0x5300);
-
-            //Log.Dump("Test", Out, true);
-
-            //Out.WriteUInt16(7018);
-
-            if (Plr == null)
+            if (player == null)
                 DispatchPacket(Out, false);
             else
-                Plr.SendPacket(Out);
+                player.SendPacket(Out);
         }
 
-        public virtual void SendState(Player Plr)
+        public virtual void SendState(Player plr=null)
         {
             if (!IsInWorld())
                 return;
 
-            if (MvtInterface.CurrentSpeed != 0 && !IsPlayer())
-            {
-                SendState(Plr, (ushort)MvtInterface.TargetPosition.X, (ushort)MvtInterface.TargetPosition.Y, (ushort)MvtInterface.TargetPosition.Z, (byte)(MvtInterface.CurrentSpeed >= 50 ? 3 : 1));
-            }
-            else
-            {
-                PacketOut Out = new PacketOut((byte)Opcodes.F_OBJECT_STATE);
-                Out.WriteUInt16(Oid);
-                Out.WriteUInt16((ushort)X);
-                Out.WriteUInt16((ushort)Y);
-                Out.WriteUInt16((ushort)Z);
-                Out.WriteByte(PctHealth);
-                Out.WriteByte(0); // Movement Type 0 None, 1 Walk, 2 ?, 3 Run
-                Out.WriteByte((byte)Zone.ZoneId);
-                Out.Fill(0, 5);
-                Out.WriteUInt16R(Heading);
+            MvtInterface.UpdateMovementState(plr);
 
-                if (Plr == null)
-                    DispatchPacket(Out, false);
-                else
-                    Plr.SendPacket(Out);
-            }
-
-            if (MvtInterface.CurrentSpeed != 0)
+            if (MvtInterface.IsMoving)
                 SendAnimation();
         }
 
         public virtual void SendAnimation()
         {
-            PacketOut Out = new PacketOut((byte)Opcodes.F_ANIMATION);
+            PacketOut Out = new PacketOut((byte) Opcodes.F_ANIMATION, 6);
             Out.WriteUInt16(Oid);
             Out.WriteUInt32(0);
             DispatchPacket(Out, false);
@@ -239,478 +333,663 @@ namespace WorldServer
 
         #region Interfaces
 
+        public ObjectStateInterface OSInterface;
         public MovementInterface MvtInterface;
         public ItemsInterface ItmInterface;
         public CombatInterface CbtInterface;
         public StatsInterface StsInterface;
         public QuestsInterface QtsInterface;
         public AbilityInterface AbtInterface;
+        public BuffInterface BuffInterface;
         public AIInterface AiInterface;
 
         #endregion
 
-        #region Health&&Damage
+        #region Health & Damage
 
-        public uint _Health=0;
+        protected uint _health;
         public uint MaxHealth = 0;
         public uint BonusHealth = 0;
 
+        /// <summary>This player is heavily wounded and moves more slowly than normal.</summary>
+        protected bool _isCriticallyWounded;
+
         public uint Health
         {
-            get { return _Health; }
+            get { return _health; }
             set
             {
-                _Health = value;
-                if (IsPlayer())
-                    GetPlayer().SendHealh();
-                else
-                    StateDirty = true;
+                _health = value;
+                StateDirty = true;
+                if (this is Player)
+                    ((Player) this).SendHealth();
             }
         }
 
-        public UInt16 _ActionPoints = 0;
-        public UInt16 ActionPoints
+        public long NextHpRegen;
+ 
+        public uint TotalHealth => MaxHealth + BonusHealth;
+        public byte PctHealth => (byte)((Health * 100) / (TotalHealth == 0 ? 1 : TotalHealth));
+
+        public bool IsDead => Health <= 0;
+
+        /// <summary>Object to lock on when modifying a player's hit points.</summary>
+        protected object DamageApplicationLock = new object();
+
+        public virtual void UpdateHealth(long tick)
         {
-            get
-            {
-                return _ActionPoints;
-            }
-            set
-            {
-                if (value > MaxActionPoints)
-                    value = MaxActionPoints;
-
-                if (_ActionPoints != value)
-                {
-                    _ActionPoints = value;
-
-                    if (IsPlayer())
-                        GetPlayer().SendHealh();
-                }
-            }
-        }
-        public UInt16 MaxActionPoints = 100;
-        public long NextHpRegen = 0;
-        public long NextApRegen = 0;
-
-        public void ResetNextActionPoints(long MSTime)
-        {
-            NextApRegen = TCPManager.GetTimeStampMS() + MSTime;
-        }
-
-        public uint TotalHealth { get { return MaxHealth + BonusHealth; } }
-        public byte PctHealth { get { return (byte)((Health * 100) / TotalHealth); } }
-        public bool IsDead 
-        { 
-            get 
-            {
-                if (Health <= 0)
-                    return true;
-
-                return false;
-            } 
-        }
-
-        public void UpdateHealth(long Tick)
-        {
-            if (Tick >= NextHpRegen)
-            {
-                NextHpRegen = Tick + HEALTH_REGEN_TIME;
-
-                if (CbtInterface.IsFighting())
-                    return;
-
-                if (Health < TotalHealth)
-                {
-                    uint Regen = TotalHealth / 8;
-
-                    if (Health + Regen > TotalHealth)
-                        Health = TotalHealth;
-                    else
-                        Health += Regen;
-                }
-            }
-        }
-
-        public void UpdateActionPoints(long Tick)
-        {
-            if (Tick >= NextApRegen)
-            {
-                if (AbtInterface.IsOnGlobalCooldown())
-                {
-                    NextApRegen = Tick + 300;
-                    return;
-                }
-
-                NextApRegen = Tick + ACTION_REGEN_TIME;
-
-                if (ActionPoints < MaxActionPoints)
-                {
-                    ActionPoints += 25;
-
-                    if (ActionPoints > MaxActionPoints)
-                        ActionPoints = MaxActionPoints;
-                }
-            }
-        }
-
-        public virtual void Strike(Unit Target, EquipSlot Slot = EquipSlot.MAIN_DROITE)
-        {
-            if (Target == null || Target.IsDead)
+            if (tick < NextHpRegen)
                 return;
 
-            float Damage = 0;
-            float DmgReduce = 0;
-            float RealDamage = 0;
+            NextHpRegen = tick + HEALTH_REGEN_TIME;
 
-            Damage = StsInterface.CalculDamage(Slot, Target);
-            DmgReduce = Target.StsInterface.CalculReduce();
-            DmgReduce = Math.Min(75, DmgReduce);
+            if (Health == TotalHealth)
+                return;
 
-            RealDamage = (Damage-((DmgReduce/100f * DmgReduce)));
-            if (RealDamage <= 2)
-                RealDamage = 2;
+            int bonusHP = StsInterface.GetTotalStat(Stats.HealthRegen) * 4;
 
-            SendAttackMovement(Target);
-            DealDamages(Target, null, (uint)RealDamage);
+            if (!CbtInterface.IsInCombat && AiInterface.State != AiState.FIGHTING)
+                bonusHP += (int)TotalHealth/8;
+
+            if (bonusHP > 0)
+                ReceiveHeal(null, (uint)bonusHP);
+        }
+    
+        /// <summary>Heals this unit and returns the points healed, or -1 if the unit died before it could be healed.</summary>
+        public virtual int ReceiveHeal(Unit caster, uint healAmount, float healHatredScale = 1.0f)
+        {
+            uint oldHealth;
+            uint resultantHealth;
+
+            if (IsDead || PendingDisposal)
+                return -1;
+
+            lock (DamageApplicationLock)
+            {
+                if (IsDead)
+                    return -1;
+                oldHealth = _health;
+                _health = Math.Min(MaxHealth, _health + healAmount);
+                resultantHealth = _health;
+
+                if (_health == MaxHealth && oldHealth < MaxHealth)
+                    DamageSources.Clear();
+            }
+
+            if (caster != null)
+            {
+                CbtInterface.OnTakeHeal(caster);
+                caster.CbtInterface.OnDealHeal(this, resultantHealth - oldHealth);
+            }
+
+            LastHealOid = caster?.Oid ?? Oid;
+
+            return (int)(resultantHealth - oldHealth);
         }
 
-        public void SendCastEffect(Unit Target,ushort AbilityEntry, GameData.CombatEvent Event, uint Count)
+        protected uint TotalDamageTaken, PendingTotalDamageTaken;
+
+        /// <summary>Inflicts damage upon this unit and returns whether lethal damage was dealt.</summary>
+        public virtual bool ReceiveDamage(Unit caster, uint damage, float hatredScale = 1f, uint mitigation = 0)
         {
+            bool wasKilled = false;
+            Player creditedPlayer = null;
+
+            if (IsDead || PendingDisposal || (IsInvulnerable && damage != int.MaxValue))
+                return false;
+
+            if (caster.Realm != Realm)
+                creditedPlayer = caster.CbtInterface.CreditedPlayer;
+
+            lock (DamageApplicationLock)
+            {
+                if (IsDead)
+                    return false;
+                if (damage >= Health)
+                {
+                    wasKilled = true;
+
+                    damage = Health;
+                    _health = 0;
+
+                    if (creditedPlayer != null)
+                    {
+                        PendingTotalDamageTaken += damage;
+                        AddTrackedDamage(creditedPlayer, damage);
+                    }
+
+                    TotalDamageTaken = PendingTotalDamageTaken;
+                    PendingTotalDamageTaken = 0;
+                }
+                else
+                {
+                    _health = Math.Max(0, _health - damage);
+
+                    if (creditedPlayer != null)
+                    {
+                        PendingTotalDamageTaken += damage;
+                        AddTrackedDamage(creditedPlayer, damage);
+                    }
+                }
+            }
+
+            CbtInterface.OnTakeDamage(caster, damage, hatredScale, mitigation);
+            caster.CbtInterface.OnDealDamage(this, damage);
+
+            LastHitOid = caster.Oid;
+
+            if (wasKilled)
+                SetDeath(caster);
+
+            return wasKilled;
+        }
+
+        /// <summary>Inflicts damage upon this unit and returns whether lethal damage was dealt.</summary>
+        public virtual bool ReceiveDamage(Unit caster, AbilityDamageInfo damageInfo)
+        {
+            return ReceiveDamage(caster, (uint)damageInfo.Damage, damageInfo.HatredScale, (uint)damageInfo.Mitigation);
+        }
+
+        protected ushort LastHitOid;
+        protected ushort LastHealOid;
+        private uint _lastHealth;
+
+        protected void SendHit(ushort casterId)
+        {
+            PacketOut Out = new PacketOut((byte)Opcodes.F_HIT_PLAYER, 12);
+            Out.WriteUInt16(casterId);
+            Out.WriteUInt16(Oid);
+            Out.WriteUInt16(0);
+            Out.WriteUInt16((ushort)_health);
+            Out.WriteByte(PctHealth);
+            Out.Fill(0, 3);
+
+            DispatchPacket(Out, true);
+
+            LastHitOid = 0;
+            LastHealOid = 0;
+            _lastHealth = _health;
+        }
+
+        protected void SendCollatedHit()
+        {
+            if (_lastHealth == 0)
+                _lastHealth = TotalHealth;
+
+            if (LastHitOid == 0 && LastHealOid == 0)
+                return;
+
+            SendHit(_health >= _lastHealth ? LastHealOid : LastHitOid);
+        }
+
+        protected readonly Dictionary<Player, uint> DamageSources = new Dictionary<Player, uint>();
+
+        protected void AddTrackedDamage(Player caster, uint damage)
+        {
+            if (caster == this)
+                return;
+            if (DamageSources.ContainsKey(caster))
+                DamageSources[caster] += damage;
+            else DamageSources.Add(caster, damage);
+        }
+
+        public void ClearTrackedDamage()
+        {
+            DamageSources.Clear();
+            PendingTotalDamageTaken = 0;
+            TotalDamageTaken = 0;
+        }
+
+        protected void RemoveDistantDamageSources()
+        {
+            List<Player> damageSourceRemovals = new List<Player>();
+            foreach (Player plr in DamageSources.Keys)
+            {
+                if (plr.GetDistanceTo(this) > 300)
+                {
+                    TotalDamageTaken -= DamageSources[plr];
+                    damageSourceRemovals.Add(plr);
+                }
+            }
+
+            if (damageSourceRemovals.Count > 0)
+                foreach (var plr in damageSourceRemovals)
+                    DamageSources.Remove(plr);
+        }
+
+        /// <summary>Flags this unit as dead and generates XP and loot.</summary>
+        protected virtual void SetDeath(Unit killer)
+        {
+            Health = 0;
+
+            States.Add((byte)CreatureState.Dead); // Death State
+
+            SendCollatedHit();
+
+            Pet pet = (killer as Pet);
+            Player credited = (pet != null) ? pet.Owner : (killer as Player);
+
+            PacketOut Out = new PacketOut((byte)Opcodes.F_OBJECT_DEATH, 12);
+                Out.WriteUInt16(Oid);
+                Out.WriteByte(1);
+                Out.WriteByte(0);
+                Out.WriteUInt16(credited?.Oid ?? killer.Oid);
+                Out.Fill(0, 6);
+            DispatchPacket(Out, true);
+
+            AbtInterface.Cancel(true);
+            ScrInterface.OnDie(this);
+            BuffInterface.RemoveBuffsOnDeath();
+            AiInterface.OnOwnerDied();
+
+            EvtInterface.Notify(EventName.OnDie, this, credited ?? killer);
+
+            if (credited != null && credited.Zone != null && !credited.PendingDisposal)
+                HandleDeathRewards(credited);
+
+            ClearTrackedDamage();
+        }
+
+        protected virtual void HandleDeathRewards(Player killer)
+        {
+            if (killer == this)
+                return;
+
+            WorldMgr.GenerateXP(killer, this, 1f);
+
+            GenerateLoot(killer.PriorityGroup != null ? killer.PriorityGroup.GetGroupLooter(killer) : GetLooter(killer), 1f);
+        }
+
+        /// <summary>
+        /// Resurrects this unit.
+        /// </summary>
+        public virtual void RezUnit()
+        {
+            AiInterface.ProcessCombatEnd();
+            States.Remove((byte)CreatureState.Dead); // Death State
+            Health = TotalHealth;
+            Region.UpdateRange(this, true);
+
+            //EvtInterface.Notify(EventName.ON_REZURECT, this, null);
+        }
+
+        /// <summary>
+        /// Returns true if this unit should block the particular type of incoming damage.
+        /// </summary>
+        public virtual bool ShouldDefend(Unit attacker, AbilityDamageInfo incDamage)
+        {
+            return false;
+        }
+
+        /// <summary>
+        /// Provides an opportunity for this unit to check the caster of the incoming ability damage from enemies.
+        /// </summary>
+        public virtual void CheckDamageCaster(Unit caster, AbilityDamageInfo incDamage)
+        {
+
+        }
+
+        /// <summary>
+        /// Provides an opportunity for this unit to modify incoming ability damage from enemies.
+        /// </summary>
+        public virtual void ModifyDamageIn(AbilityDamageInfo incDamage)
+        {
+            
+        }
+
+        /// <summary>
+        /// Provides an opportunity for this unit to modify outgoing ability damage it deals.
+        /// </summary>
+        public virtual void ModifyDamageOut(AbilityDamageInfo outDamage)
+        {
+            
+        }
+
+        /// <summary>
+        /// Attempt at detaunts redo
+        /// </summary>
+        /// <param name="amount"></param>
+        /// <returns></returns>
+        public Dictionary<ushort, float> Detaunters = new Dictionary<ushort, float>();
+
+        #endregion
+
+        #region Action Points
+
+        public virtual bool HasActionPoints(int amount)
+        {
+            return true;
+        }
+
+        /// <summary><para>Adds the amount specified to the player's action points.</para>
+        /// <para>Returns the change in action points.</para></summary>
+        public virtual int ModifyActionPoints(int amount)
+        {
+            return 0;
+        }
+
+        /// <summary><para>Removes the amount specified from the player's action points.</para>
+        /// <para>Returns false if player doesn't have enough AP.</para></summary>
+        public virtual bool ConsumeActionPoints(ushort amount)
+        {
+            return true;
+        }
+
+        #endregion
+
+        #region Combat
+
+        public bool CanHitWithAoE(Unit target, double hitAngle, uint maxRadius)
+        {
+            if (target?.Zone == null)
+                return false;
+
+            Pet pet = null;
+            if (target is Pet)
+                pet = target as Pet;
+
+            if (pet != null && pet.Owner != null && (pet.Owner.Info.CareerLine == (int)CareerLine.CAREERLINE_WHITELION) && WorldMgr.WorldSettingsMgr.GetGenericSetting(18) == 0)
+                return false;
+
+            if (Math.Abs(target.Z - Z) > 360) // 20ft by ability range (30ft in reality)
+                return false;
+
+            float angle = GetAngle(new Point2D(target.WorldPosition.X, target.WorldPosition.Y));
+            if (angle >= 360 - hitAngle / 2 || angle < hitAngle / 2)
+            {
+                if (maxRadius == 0)
+                    return true;
+
+                // Check for players in cover
+                Player plr = target as Player;
+
+                if (plr != null && plr.Palisade != null && (plr.Palisade.IsObjectInFront(plr, 180) ^ plr.Palisade.IsObjectInFront(this, 180)))
+                    return false;
+
+                return IsInCastRange(target, maxRadius - 10) && LOSHit(target);
+            }
+
+            return false;
+        }
+
+        public static float CHARACTER_HEIGHT = 72.0f;
+
+        public bool LOSHit(Unit target)
+        {
+            if (Zone == null)
+            { 
+                Log.Error("LOSHit", "No Zone");
+                return false;
+            }
+
+            if (target == null)
+            {
+                Log.Error("LOSHit", "No target");
+                return false;
+            }
+
+            if (target.Zone == null)
+            {
+                Log.Error("LOSHit", "Target not in a Zone");
+                return false;
+            }
+
+            WarZoneLib.Vector3 playnice = new WarZoneLib.Vector3();
+            RegionData.OcclusionResult result = RegionData.OcclusionQuery(
+               Zone.ZoneId, X, Y, Z + CHARACTER_HEIGHT,
+               target.Zone.ZoneId, target.X, target.Y, target.Z + CHARACTER_HEIGHT, ref playnice);
+
+            #if DEBUG
             if (IsPlayer())
-            {
-                PacketOut Out = new PacketOut((byte)Opcodes.F_CAST_PLAYER_EFFECT);
-                Out.WriteUInt16(Oid);
-                Out.WriteUInt16(Target.Oid);
-                Out.WriteUInt16(AbilityEntry);
-                Out.WriteByte(0);
-                Out.WriteByte((byte)Event);
-                Out.WriteByte(0x13);
-                Out.WriteByte((byte)((128 + (Count % 64) * 2) + 1));
-                Out.WriteByte((byte)(Count / 64));
-                Out.WriteByte(0);
-                DispatchGroup(Out);
-            }
+                GetPlayer().SendLocalizeString("Result: " + result, SystemData.ChatLogFilters.CHATLOGFILTERS_SAY, Localized_text.CHAT_TAG_DEFAULT);
+            #endif
 
-            if (Target != this && Target.IsPlayer())
-            {
-                PacketOut Out = new PacketOut((byte)Opcodes.F_CAST_PLAYER_EFFECT);
-                Out.WriteUInt16(Oid);
-                Out.WriteUInt16(Target.Oid);
-                Out.WriteUInt16(AbilityEntry);
-                Out.WriteByte(0);
-                Out.WriteByte((byte)Event);
-                Out.WriteByte(0x13);
-                Out.WriteByte((byte)((128 + (Count % 64) * 2) + 1));
-                Out.WriteByte((byte)(Count / 64));
-                Out.WriteByte(0);
-                Target.DispatchGroup(Out);
-            }
+            return result != RegionData.OcclusionResult.Occluded;
         }
 
-        public void SendAttackMovement(Unit Target)
+        public bool LOSHit(ushort zoneId, Point3D pinPos)
         {
-            PacketOut Out = new PacketOut((byte)Opcodes.F_USE_ABILITY);
+            if (Zone == null)
+            {
+                Log.Error("LOSHit", "No Zone");
+                return false;
+            }
+
+            WarZoneLib.Vector3 playnice = new WarZoneLib.Vector3();
+            RegionData.OcclusionResult result = RegionData.OcclusionQuery(
+               Zone.ZoneId, X, Y, Z + CHARACTER_HEIGHT,
+              zoneId, pinPos.X, pinPos.Y, pinPos.Z + CHARACTER_HEIGHT, ref playnice);
+
+            #if DEBUG
+            if (IsPlayer())
+                GetPlayer().SendLocalizeString("Result: " + result, SystemData.ChatLogFilters.CHATLOGFILTERS_SAY, Localized_text.CHAT_TAG_DEFAULT);
+            #endif
+
+            return result != RegionData.OcclusionResult.Occluded;
+        }
+
+        /// <summary>Performs an auto-attack against the target using the specified hand.</summary>
+        public virtual void Strike(Unit target, EquipSlot slot = EquipSlot.MAIN_HAND)
+        {
+            if (target.IsDead || !CanAutoAttack)
+                return;
+
+            CombatManager.InflictAutoAttackDamage(slot, this, target);
+        }
+
+        /// <summary>Displays the auto-attack animation on clients.</summary>
+        public virtual void SendAttackMovement(Unit target)
+        {
+            PacketOut Out = new PacketOut((byte)Opcodes.F_USE_ABILITY, 20);
             Out.WriteUInt16(0);
             Out.WriteUInt16(Oid);
             Out.WriteUInt16(Oid);
             Out.WriteUInt16(0);
-            Out.WriteUInt16(Target.Oid);
+            Out.WriteUInt16(target.Oid);
             Out.WriteByte(2);
             Out.Fill(0, 9);
             DispatchPacket(Out, true);
         }
 
-        /// <summary>
-        /// Deal Damages but check abilities buff reductions (absorb, invinsibility, etc)
-        /// </summary>
-        public virtual void DealDamages(Unit Target, Ability Ab, uint Damages)
-        {
-            AbtInterface.OnDealDamages(Target, Ab, ref Damages);
-            Target.AbtInterface.OnReceiveDamages(this, Ab, ref Damages);
-
-            if (Ab != null) // Ability Damage
-            {
-                Ab.SendSpellDamage(Target, Damages, false);
-                Ab.SendSpellEffect(this, Target, (ushort)Damages, (ushort)Damages, Ab.Info);
-            }
-            else // Weapon
-            {
-                SendCastEffect(Target, 0, GameData.CombatEvent.COMBATEVENT_HIT, Damages);
-            }
-
-            DealDamages(Target, (uint)Damages);
-        }
-
-        /// <summary>
-        /// Deal direct damage , no calculations
-        /// </summary>
-        public virtual void DealDamages(Unit Target, uint Damages)
-        {
-            if (Target == null || Target.IsDead)
-                return;
-
-            CbtInterface.OnDealDamage(Target, Damages);
-            Target.CbtInterface.OnTakeDamage(this, Damages);
-
-            if (Target.IsInvinsible)
-                return;
-
-            if (IsCreature() && Target.IsCreature())
-                return;
-
-            if (Target.Health <= Damages)
-            {
-                Target.SetDeath(this);
-                CbtInterface.OnTargetDie(Target);
-            }
-            else
-            {
-                Target.Health -= Damages;
-            }
-        }
-
-        /// <summary>
-        /// Deal Heal, check abilities buff (heal bonus , etc )
-        /// </summary>
-        public virtual void DealHeal(Unit Target, Ability Ab, uint Heal)
-        {
-            AbtInterface.OnDealHeals(Target, Ab, ref Heal);
-            Target.AbtInterface.OnReceiveHeal(this, Ab, ref Heal);
-
-            if (Ab != null)
-            {
-                Ab.SendSpellDamage(Target, Heal, true);
-                Ab.SendSpellEffect(this, Target, (ushort)Heal, (ushort)Heal, Ab.Info);
-            }
-
-            DealHeal(Target, (uint)Heal);
-        }
-
-        /// <summary>
-        /// Direct Heal , no calculation
-        /// </summary>
-        public virtual void DealHeal(Unit Target, uint Value)
-        {
-            if (Target == null || Target.IsDead)
-                return;
-
-            CbtInterface.OnDealHeal(Target, Value);
-            Target.CbtInterface.OnTakeHeal(this, Value);
-
-            if (Value + Target.Health > Target.MaxHealth)
-                Target.Health = Target.MaxHealth;
-            else
-                Target.Health += Value;
-        }
-
-        /// <summary>
-        /// Kill this unit, Generate Xp and Loots
-        /// </summary>
-        /// <param name="Killer"></param>
-        public virtual void SetDeath(Unit Killer)
-        {
-            Health = 0;
-
-            States.Add(3); // Death State
-
-            PacketOut Out = new PacketOut((byte)Opcodes.F_OBJECT_DEATH);
-            Out.WriteUInt16(Oid);
-            Out.WriteByte(1);
-            Out.WriteByte(0);
-            Out.WriteUInt16(Killer.Oid);
-            Out.Fill(0, 6);
-            DispatchPacket(Out, true);
-
-            CbtInterface.Evade();
-
-            WorldMgr.GenerateXP(Killer, this);
-            GenerateLoot(Killer);
-
-            EvtInterface.Notify(EventName.ON_DIE, this, null);
-        }
-
-        public virtual void RezUnit()
-        {
-            CbtInterface.Evade();
-            States.Remove(3); // Death State
-            Health = TotalHealth;
-            Region.UpdateRange(this, true);
-
-            EvtInterface.Notify(EventName.ON_REZURECT, this, null);
-        }
-
         #endregion
 
-        #region Loots
+        #region Loot
 
-        public Loot Loots = null;
+        public LootContainer lootContainer;
 
-        public void GenerateLoot(Unit Killer)
+        /// <summary><para>Determines who should receive the loot for this kill.</para></summary>
+        public virtual Player GetLooter(Player killer)
         {
-            if (Killer == null)
-                return;
-
-            Loots = LootsMgr.GenerateLoot(this, Killer);
-            if (Loots != null && Killer.IsPlayer())
-                SetLootable(true, Killer.GetPlayer());
+            Player firstStriker = ((CombatInterface_Npc)CbtInterface).FirstStriker;
+            if (firstStriker != null && Rank < 2)
+                return firstStriker;
+            return killer;
         }
 
-        public void SetLootable(bool Value,Player Looter)
+        public virtual void GenerateLoot(Player looter, float dropMod)
         {
-            PacketOut Out = new PacketOut((byte)Opcodes.F_UPDATE_STATE);
+            lootContainer = LootsMgr.GenerateLoot(this, looter, dropMod);
+            
+            if (lootContainer != null)
+                SetLootable(true, looter);          
+        }
+
+        public void SetLootable(bool value, Player looter)
+        {
+            PacketOut Out = new PacketOut((byte)Opcodes.F_UPDATE_STATE, 10);
             Out.WriteUInt16(Oid);
             Out.WriteByte(9);
-            Out.WriteByte((byte)(Value ? 1 : 0));
+            Out.WriteByte((byte)(value ? 1 : 0));
             Out.Fill(0, 6);
-            if (Looter != null)
-                Looter.SendPacket(Out);
+            if (looter != null)
+                looter.SendPacket(Out);
             else
                 DispatchPacket(Out, false);
+        }
+
+        public void GatherLootable(bool value, Player looter, byte gatherProfession)
+        {
+            PacketOut Out = new PacketOut((byte)Opcodes.F_UPDATE_STATE, 10);
+            Out.WriteUInt16(Oid);
+            Out.WriteByte((byte)(30 + gatherProfession));
+            Out.WriteByte((byte)(value ? 1 : 0));
+            Out.Fill(0, 6);
+
+
+            foreach (Player player in PlayersInRange)
+            {
+                if (player._Value.GatheringSkill == gatherProfession)
+                    player.SendCopy(Out);
+            }
         }
 
         #endregion
 
         #region Interact
 
-        public override void SendInteract(Player Plr, InteractMenu Menu)
+        public override void SendInteract(Player player, InteractMenu menu)
         {
-            if (IsDead && Loots != null)
-            {
-                Loots.SendInteract(Plr, Menu);
-                if (!Loots.IsLootable())
-                    SetLootable(false, Plr);
-            }
+            if (IsDead)
+                TryLoot(player, menu);
 
-            base.SendInteract(Plr, Menu);
+            base.SendInteract(player, menu);
+        }
+
+        public virtual void TryLoot(Player player, InteractMenu menu)
+        {
+            if (lootContainer != null && lootContainer.IsLootable())
+            {
+                player.PriorityGroup?.GroupLoot(player, lootContainer);
+
+                lootContainer.SendInteract(player, menu);
+
+                if (!lootContainer.IsLootable())
+                    SetLootable(false, player);
+            }
         }
 
         #endregion
 
         #region Values
 
-        public UInt16 Speed
+        public ushort Speed
         {
-            get 
-            { 
-                return (UInt16)((float)StsInterface.Speed + (((float)StsInterface.Speed * (float)StsInterface.BonusSpeed) * 0.01f)); 
+            get
+            {
+                if (IsDisabled)
+                    return 0;
+                return (ushort)(StsInterface.Speed * StsInterface.VelocityMod);
             }
             set
             {
                 StsInterface.Speed = value;
-                if (IsPlayer())
-                    GetPlayer().SendSpeed(CanMove() ? Speed : (ushort)0);
             }
         }
-        public long NextAllowedMovements=0;
-        private byte _Level = 1;
+
+        public virtual void UpdateSpeed()
+        {
+            MvtInterface.SetBaseSpeed((ushort)(StsInterface.Speed * StsInterface.VelocityMod));
+        }
+
+        private byte _level = 1;
         public byte Level
         {
-            get
-            {
-                if (IsPlayer())
-                    return GetPlayer()._Value.Level;
-                else
-                    return _Level;
+            get {
+                return IsPlayer() ? GetPlayer()._Value.Level : _level;
             }
             set
             {
                 if (IsPlayer())
                     GetPlayer().SetLevel(value);
                 else
-                    _Level = value;
+                    _level = value;
             }
         }
 
-        private byte _Renown = 1;
-        public byte Renown
+        /// <summary>
+        /// Represents the level the player has for the purpose of combat calculations.
+        /// </summary>
+        public byte EffectiveLevel => StsInterface.BolsterLevel == 0 ? Level : StsInterface.BolsterLevel;
+
+        /// <summary>
+        /// Represents the current base level that the player has. This is equal to the player's level unless they are debolstered.
+        /// </summary>
+        public byte AdjustedLevel => StsInterface.BolsterLevel == 0 ? Level : Math.Min(Level, StsInterface.BolsterLevel);
+
+        private byte _renown = 1;
+        public byte RenownRank
         {
             get
             {
                 if (IsPlayer())
                     return GetPlayer()._Value.RenownRank;
-                else
-                    return _Renown;
+                return _renown;
             }
             set
             {
                 if (IsPlayer())
                     GetPlayer().SetRenownLevel(value);
                 else
-                    _Renown = value;
+                    _renown = value;
             }
         }
 
-        private UInt16 _Model = 0;
-        public UInt16 Model
+        protected byte _adjustedRenown;
+
+        /// <summary>
+        /// Represents the current base renown rank that the player has. This is equal to the player's renown rank unless they are debolstered.
+        /// </summary>
+        public byte AdjustedRenown => _adjustedRenown > 0 ? _adjustedRenown : RenownRank;
+
+        private ushort _model;
+        public ushort Model
         {
             get
             {
                 if (IsPlayer())
-                    return GetPlayer()._Info.ModelId;
+                    return GetPlayer().Info.ModelId;
                 else
-                    return _Model;
+                    return _model;
             }
             set
             {
                 if (IsPlayer())
-                    GetPlayer()._Info.ModelId = (byte)value;
+                    GetPlayer().Info.ModelId = (byte)value;
                 else
-                    _Model = value;
+                    _model = value;
             }
         }
 
-        public byte Rank = 0; // Normal,Champion,Hero,Lord
-        public byte Faction = 0; // Faction Flag
-        public byte FactionId = 0; // FactionFlag/8
-        public bool Agressive = false;
-        public GameData.Realms Realm = GameData.Realms.REALMS_REALM_NEUTRAL;
+        public byte Rank; // Normal,Champion,Hero,Lord
+        public byte Faction; // Faction Flag
+        public byte FactionId; // FactionFlag/8
+        public bool Aggressive;
+        public Realms Realm { get; set; } = Realms.REALMS_REALM_NEUTRAL;
 
-        public void SetFaction(byte NewFaction)
+        public void SetFaction(byte newFaction)
         {
-            Faction = NewFaction;
+            Faction = newFaction;
 
-            FactionId = (byte)(NewFaction / 8);
-            Faction = (byte)(NewFaction % 8);
-            Agressive = Convert.ToBoolean(Faction % 2);
+            FactionId = (byte)(newFaction / 8);
+            Faction = (byte)(newFaction % 8);
+            Aggressive = Convert.ToBoolean(Faction % 2);
             Rank = (byte)(Faction / 2);
 
             if (FactionId >= 8 && FactionId <= 15)
-                Realm = GameData.Realms.REALMS_REALM_ORDER;
+                Realm = Realms.REALMS_REALM_ORDER;
             else if (FactionId >= 16 && FactionId <= 23)
-                Realm = GameData.Realms.REALMS_REALM_DESTRUCTION;
+                Realm = Realms.REALMS_REALM_DESTRUCTION;
             else
-                Realm = GameData.Realms.REALMS_REALM_NEUTRAL;
+                Realm = Realms.REALMS_REALM_NEUTRAL;
 
-            Faction = NewFaction;
+            Faction = newFaction;
 
-            if (Agressive)
-                AiInterface.SetBrain(new AgressiveBrain(AiInterface));
-        }
-
-        public void DisableMovements(long MSTime)
-        {
-            NextAllowedMovements = TCPManager.GetTimeStampMS() + MSTime;
-            Log.Info("DisableMovements", "NextAllowedMovements: " + NextAllowedMovements + ",Time=" + MSTime);
-            if (IsPlayer())
-                GetPlayer().SendSpeed(0);
-        }
-
-        public bool CanMove()
-        {
-            return NextAllowedMovements == 0;
-        }
-
-        public void UpdateSpeed(long Tick)
-        {
-            if (NextAllowedMovements != 0 && NextAllowedMovements < Tick)
+            if (AiInterface.CurrentBrain == null || (!(this is GameObject) && AiInterface.CurrentBrain is DummyBrain))
             {
-                Log.Info("UpdateSpeed", "Can move : " + CanMove());
-                NextAllowedMovements = 0;
-                if (IsPlayer())
-                    GetPlayer().SendSpeed(Speed);
+                if (Aggressive)
+                    AiInterface.SetBrain(new AggressiveBrain(this));
                 else
-                    MvtInterface.CancelWalkTo();
+                    AiInterface.SetBrain(new PassiveBrain(this));
             }
         }
 
@@ -718,29 +997,344 @@ namespace WorldServer
 
         #region Range
 
-        public override void AddInRange(Object Obj)
+        public override void AddInRange(Object obj)
         {
-            if(Obj.IsUnit())
-                AiInterface.AddRange(Obj.GetUnit());
+           // Log.Info("InRange", "AddInRange : For=" + Name + " To " + obj.Name + " id=" + obj.Oid + " distance=" + GetAdjustedDistanceTo(obj));
+            if (obj.IsUnit())
+                AiInterface.AddRange(obj.GetUnit());
 
-            base.AddInRange(Obj);
+            base.AddInRange(obj);
         }
 
-        public override void RemoveInRange(Object Obj)
+        public override void RemoveInRange(Object obj)
         {
-            if (Obj.IsUnit())
-                AiInterface.RemoveRange(Obj.GetUnit());
+            if (obj.IsUnit())
+                AiInterface.RemoveRange(obj.GetUnit());
 
-            base.RemoveInRange(Obj);
+            base.RemoveInRange(obj);
         }
 
-        public override void ClearRange()
+        public override void ClearRange(bool fromNewRegion = false)
         {
             AiInterface.ClearRange();
-            base.ClearRange();
+            base.ClearRange(fromNewRegion);
         }
 
         #endregion
 
+        #region UpdateState
+
+        public void SendUpdateState(byte stateID, byte val1, byte val2 = 0, byte val3 = 0)
+        {
+            if (!(this is Player))
+                return;
+
+            PacketOut Out = new PacketOut((byte)Opcodes.F_UPDATE_STATE, 10);
+            Out.WriteUInt16(Oid);
+            Out.WriteByte(stateID);
+            Out.WriteByte(val1);
+            Out.WriteByte(val2);
+            Out.WriteByte(val3);    // guild heraldy
+            Out.Fill(0, 5);
+            ((Player) this).SendPacket(Out);
+        }
+
+        public void DispatchUpdateState(byte stateID, byte val1, byte val2 = 0, byte val3 = 0)
+        {
+            PacketOut Out = new PacketOut((byte)Opcodes.F_UPDATE_STATE, 12);
+            Out.WriteUInt16(Oid);
+            Out.WriteByte(stateID);
+            Out.WriteByte(val1);
+            Out.WriteByte(val2);
+            Out.WriteByte(val3);    // guild heraldry
+            Out.Fill(0, 5);
+            DispatchPacket(Out, true);
+        }
+
+        public void DispatchUpdateState(byte stateID, ushort val1)
+        {
+            PacketOut Out = new PacketOut((byte)Opcodes.F_UPDATE_STATE, 12);
+            Out.WriteUInt16(Oid);
+            Out.WriteByte(stateID);
+            Out.Fill(0, 3);
+            Out.WriteUInt16(val1);
+            Out.Fill(0, 2);
+            DispatchPacket(Out, true);
+        }
+
+        #endregion
+
+        #region Mounting
+
+        public virtual void Mount(ushort mountID)
+        {
+            MountID = mountID;
+            SendMount();
+        }
+
+        protected void SendMount(Player Plr = null)
+        {
+            PacketOut Out = new PacketOut((byte)Opcodes.F_MOUNT_UPDATE, 20);
+            Out.WriteUInt16(Oid);
+            Out.WriteUInt16(MountID);
+            Out.WriteUInt16(MountArmor);
+            Out.Fill(0, 14);
+
+            if (Plr == null)
+                DispatchPacket(Out, true);
+            else
+                Plr.SendPacket(Out);
+        }
+
+        public virtual void Dismount()
+        {
+            MountID = 0;
+
+            PacketOut Out = new PacketOut((byte)Opcodes.F_MOUNT_UPDATE, 20);
+            Out.WriteUInt16(Oid);
+            Out.Fill(0, 18);
+
+            DispatchPacket(Out, true);
+        }
+
+        #endregion
+
+        #region CrowdControl
+
+        /// <summary>Indicates that this unit cannot be knocked back or rooted.</summary>
+        public bool IsImmovable
+        {
+            get
+            {
+                return _immovableCount > 0;
+            }
+            set
+            {
+                if (value) ++_immovableCount;
+                else --_immovableCount;
+            }
+        }
+
+        private byte _immovableCount;
+
+        public bool NoKnockbacks { get; set; }
+
+        /// <summary>Object to lock on when performing an action which might trigger Immovable.</summary>
+        protected object MovementCCLock = new object();
+
+        /// <summary>Active crowd control effects.</summary>
+        public byte CrowdControlType { get; set; }
+        public int CrowdControlBlock { get; protected set; }
+
+        private readonly byte[] _crowdControlBlocks = new byte[5];
+
+        public bool IsPolymorphed;
+
+        public bool IsKeepLord = false;
+
+        public void AddCrowdControlImmunity(int flags)
+        {
+            byte count = 0;
+
+            while (flags > 0 && count < 5)
+            {
+                if ((flags & 1) > 0)
+                {
+                    if (_crowdControlBlocks[count] == 0)
+                        CrowdControlBlock |= 1 << count;
+                    ++_crowdControlBlocks[count];
+                }
+                ++count;
+                flags = flags >> 1;
+            }
+
+            /*#if DEBUG
+            Say("Add: CC Immunity: " + Convert.ToString(CrowdControlBlock, 2), SystemData.ChatLogFilters.CHATLOGFILTERS_SAY);
+            #endif*/
+        }
+
+        public void RemoveCrowdControlImmunity(int flags)
+        {
+            byte count = 0;
+
+            while (flags > 0 && count < 5)
+            {
+                if ((flags & 1) > 0)
+                {
+                    --_crowdControlBlocks[count];
+                    if (_crowdControlBlocks[count] == 0)
+                        CrowdControlBlock &= ~(1 << count);
+                }
+                ++count;
+                flags = flags >> 1;
+            }
+
+            /*
+            #if DEBUG
+            Say("Remove: CC Immunity: " + Convert.ToString(CrowdControlBlock, 2), SystemData.ChatLogFilters.CHATLOGFILTERS_SAY);
+            #endif
+            */
+        }
+
+        public bool ImmuneToCC(int ccFlag, Unit caster, ushort abilityEntry)
+        {
+            if ((ccFlag & CrowdControlBlock) == 0)
+                return false;
+
+            if (caster == null)
+                return true;
+
+            NotifyImmune(caster, abilityEntry);
+
+            return true;
+        }
+
+        protected void NotifyImmune(Unit caster, ushort abilityEntry)
+        {
+            PacketOut Out = new PacketOut((byte)Opcodes.F_CAST_PLAYER_EFFECT, 10);
+
+            Out.WriteUInt16(caster.Oid);
+            Out.WriteUInt16(Oid);
+            Out.WriteUInt16(abilityEntry);
+
+            Out.WriteByte(0);
+            Out.WriteByte((byte)CombatEvent.COMBATEVENT_IMMUNE);
+            Out.WriteByte(5);
+
+            Out.WriteByte(0);
+
+            DispatchPacketUnreliable(Out, true, this);
+        }
+
+        /// <summary>Determines whether active crowd control effects would prevent this ability from casting.</summary>
+        public bool BlockedByCC(AbilityConstants abCstInfo)
+        {
+            byte ccState = CrowdControlType;
+
+            if (IsPolymorphed)
+                return true;
+
+            if (ccState == 0)
+                return false;
+
+            // Knockdown or Stagger
+            if ((ccState & 48) > 0)
+                return true;
+
+            // Disarm
+            if ((abCstInfo.AbilityType == AbilityType.Melee || abCstInfo.AbilityType == AbilityType.Ranged) && (ccState & 4) > 0)
+                return true;
+
+            // Silence
+            if (abCstInfo.AbilityType == AbilityType.Verbal && (ccState & 8) > 0)
+                return true;
+
+            return false;
+        }
+
+        public virtual void ApplyKnockback(Unit caster, AbilityKnockbackInfo kbInfo)
+        {
+
+        }
+
+        /// <summary>Indicates whether a unit is incapable of moving or acting.</summary>
+        public bool IsDisabled => CrowdControlType > 0 && (Utils.HasFlag(CrowdControlType, (int)CrowdControlTypes.Disabled) || Utils.HasFlag(CrowdControlType, (int)CrowdControlTypes.Knockdown));
+
+        /// <summary>Indicates whether a unit is capable of auto-attacking.</summary>
+        public bool CanAutoAttack => CrowdControlType == 0 || !Utils.HasFlag(CrowdControlType, (int)CrowdControlTypes.NoAutoAttack);
+
+        /// <summary>Indicates whether a unit is staggered.</summary>
+        public bool IsStaggered => CrowdControlType > 0 && Utils.HasFlag(CrowdControlType, (int)CrowdControlTypes.Stagger);
+
+        /// <summary>Regular root command. Will fail if the target is Immovable.</summary>
+        public virtual bool TryRoot(NewBuff hostBuff)
+        {
+            if (IsImmovable)
+                return false;
+            lock (MovementCCLock)
+            {
+                if (IsImmovable)
+                    return false;
+                IsImmovable = true;
+            }
+
+            BuffInterface.QueueBuff(new BuffQueueInfo(this, EffectiveLevel, AbilityMgr.GetBuffInfo((ushort)GameBuffs.Immovable)));
+            StsInterface.AddVelocityModifier(hostBuff, 0);
+            return true;
+        }
+
+        /// <summary>
+        /// <para>Root command used for Champion's Challenge.</para>
+        /// <para>Prevents either target from being punted or punting themselves.</para>
+        /// </summary>
+        public void EnterGrapple(NewBuff hostBuff, bool triggersImmunity)
+        {
+            lock (MovementCCLock)
+            {
+                if (!IsImmovable && !NoKnockbacks)
+                {
+                    if (triggersImmunity)
+                    {
+                        IsImmovable = true;
+                        BuffInterface.QueueBuff(new BuffQueueInfo(this, EffectiveLevel, AbilityMgr.GetBuffInfo((ushort)GameBuffs.Immovable)));
+                    }
+                }
+                NoKnockbacks = true;
+                StsInterface.AddVelocityModifier(hostBuff, 0);
+            }
+        }
+
+
+        public void SetImmovable(bool state)
+        {
+            lock (MovementCCLock)
+            {
+                if (state)
+                    ++_immovableCount;
+                else
+                    --_immovableCount;
+            }
+        }
+
+        #endregion
+
+        #region GFX
+
+        private readonly List<Tuple<ushort, ushort>> _gfxModList = new List<Tuple<ushort, ushort>>();
+
+        public void SendGfxMods()
+        {
+            SendGfxMods(null);
+        }
+
+        public void SendGfxMods(Player player)
+        {
+            if (_gfxModList.Count == 0)
+                return;
+
+            PacketOut Out = new PacketOut((byte)Opcodes.F_GFX_MOD);
+            Out.WriteByte((byte)_gfxModList.Count);
+            Out.WriteByte(0);
+            Out.WriteUInt16(Oid);
+            foreach (Tuple<ushort, ushort> mod in _gfxModList)
+            {
+                Out.WriteUInt16(mod.Item1);
+                Out.WriteUInt16(mod.Item2);
+            }
+
+            Out.WriteUInt16(0);
+
+            if (player != null)
+                player.SendPacket(Out);
+            else
+                DispatchPacket(Out, false);
+        }
+
+        public void AddGfxMod(ushort oldMod, ushort newMod)
+        {
+            _gfxModList.Add(new Tuple<ushort, ushort>(oldMod, newMod));
+        }
+
+        #endregion
     }
 }

@@ -1,22 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
+﻿
 using System;
 
 public enum Opcodes
@@ -52,6 +34,7 @@ public enum Opcodes
     F_PLAYER_CLEAR_DEATH = 0x21,
     F_COMMAND_CONTROLLED = 0x22,
     F_GUILD_COMMAND = 0x25,
+    F_RENAME_CHARACTER = 0x26,
     F_REQUEST_TOK_REWARD = 0x27,
     F_SURVEY_BEGIN = 0x28,
     F_SHOW_DIALOG = 0x29,
@@ -163,6 +146,7 @@ public enum Opcodes
     F_SOCIAL_NETWORK = 0xB6,
     F_AUCTION_SEARCH_RESULT = 0xB7,
     F_PLAYER_ENTER_FULL = 0xB8,
+    F_UPDATE_ITEM_COOLDOWN = 0xB9,
     F_AUCTION_BID_ITEM = 0xBB,
     F_ESTABLISH_DATAGRAM = 0xBC,
     F_PLAYER_INVENTORY = 0xBD,

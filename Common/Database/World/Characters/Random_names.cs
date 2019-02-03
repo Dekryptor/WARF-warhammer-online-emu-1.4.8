@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,13 +24,13 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "random_names", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "random_names", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Random_name : DataObject
     {
         private string _Name;
 
-        [DataElement(Unique = true, Varchar = 255)]
+        [PrimaryKey]
         public string Name
         {
             get { return _Name; }

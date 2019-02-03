@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,27 +19,14 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.IO;
-
-using FrameWork.Utils;
+using System.Threading;
 
 namespace FrameWork
 {
     public class PacketIn : MemoryStream
     {
-        // Opcode du packet
-        private UInt64 _Opcode = 0;
-        private UInt64 _Size = 0;
-
-        public UInt64 Opcode
-        {
-            get { return _Opcode; }
-            set { _Opcode = value; }
-        }
-        public UInt64 Size
-        {
-            get { return _Size; }
-            set { _Size = value; }
-        }
+        public ulong Opcode { get; set; }
+        public ulong Size { get; set; }
 
         public PacketIn(int size)
             : base(size)
@@ -51,6 +36,12 @@ namespace FrameWork
         public PacketIn(byte[] buf, int start, int size)
             : base(buf, start, size)
         {
+        }
+
+        public PacketIn(byte[] buf, int start, int size, bool writeable, bool exposable)
+            : base (buf, start, size, writeable, exposable)
+        {
+            
         }
 
         public byte[] Read(int size)
@@ -74,7 +65,7 @@ namespace FrameWork
             return (byte)ReadByte();
         }
 
-        public virtual UInt16 GetUint16()
+        public virtual ushort GetUint16()
         {
             return Marshal.ConvertToUInt16(GetUint8(), GetUint8());
         }
@@ -86,12 +77,12 @@ namespace FrameWork
             return Marshal.ConvertToUInt16(v2, v1);
         }
 
-        public virtual Int16 GetInt16()
+        public virtual short GetInt16()
         {
             byte[] tmp = { GetUint8() , GetUint8()  };
             return BitConverter.ToInt16(tmp, 0);
         }
-        public virtual Int16 GetInt16R()
+        public virtual short GetInt16R()
         {
             byte v1 = GetUint8();
             byte v2 = GetUint8();
@@ -119,12 +110,12 @@ namespace FrameWork
             return Marshal.ConvertToUInt32(v4, v3, v2, v1);
         }
 
-        public virtual Int32 GetInt32()
+        public virtual int GetInt32()
         {
             byte[] tmp = { GetUint8(), GetUint8(), GetUint8(), GetUint8() };
             return BitConverter.ToInt32(tmp, 0);
         }
-        public virtual Int32 GetInt32R()
+        public virtual int GetInt32R()
         {
             byte v1 = GetUint8();
             byte v2 = GetUint8();
@@ -135,29 +126,67 @@ namespace FrameWork
             return BitConverter.ToInt32(tmp, 0);
         }
 
-        public UInt64 GetUint64()
+        public ulong GetUint64()
         {
-            UInt64 value = (GetUint32() << 24) + (GetUint32());
+            ulong value = (GetUint32() << 24) + (GetUint32());
             return value;
         }
-        public UInt64 GetUint64R()
+        public ulong GetUint64R()
         {
 
-            UInt64 value = (GetUint32()) + (GetUint32() << 24);
+            ulong value = (GetUint32()) + (GetUint32() << 24);
             return value;
         }
 
-        public Int64 GetInt64()
+        public long GetInt64()
         {
             byte[] tmp = Read(8);
             return BitConverter.ToInt64(tmp, 0);
         }
 
-        public Int64 GetInt64R()
+        public long GetInt64R()
         {
             byte[] tmp = Read(8);
             Array.Reverse(tmp);
             return BitConverter.ToInt64(tmp, 0);
+        }
+
+        public int GetIntClamped(int min, int max)
+        {
+            unchecked
+            {
+                int eax = 0, ecx = 0, edx = 0;
+
+                eax = max;
+                eax = eax - min;
+                if (eax < 0)
+                    eax = min - max;
+
+                eax++;
+                edx = 0x20;
+                max = eax;
+                ecx = 0;
+
+                //find out how many bits min->max fits in
+                while (eax >= 1 << ecx && ecx < 32)
+                    ecx++;
+
+                edx = ecx;
+
+                int val;
+                if (edx <= 8)
+                    val = ReadByte();
+                else if (edx <= 16)
+                    val = GetInt16();
+                else if (edx <= 24)
+                    throw new ArgumentException("24");
+                else if (edx <= 32)
+                    val = GetInt32();
+                else
+                    throw new ArgumentException("> 32");
+
+                return min + val;
+            }
         }
 
         public float GetFloat()
@@ -181,6 +210,16 @@ namespace FrameWork
         public virtual string GetString()
         {
             int len = (int)GetUint32();
+
+            var buf = new byte[len];
+            Read(buf, 0, len);
+
+            return Marshal.ConvertToString(buf);
+        }
+
+        public virtual string GetString16()
+        {
+            var len = GetUint16();
 
             var buf = new byte[len];
             Read(buf, 0, len);
@@ -271,59 +310,58 @@ namespace FrameWork
             mSize = (mSize | (mByte << (7 * mByteCount)));
             return mSize;
         }
-        public PacketIn DecryptMythicRC4(byte[] Key)
+
+        private static readonly ThreadLocal<byte[]> ThreadLocalKey = new ThreadLocal<byte[]>(() => new byte[256]);
+
+        public static void DecryptMythicRC4(byte[] key, byte[] packetBuffer, int offset, int length)
         {
-            // Putin ... j'en ai chié pour réussir a faire sa...
             try
             {
-                byte[] Packet = new byte[Length];
-                Read(Packet, (int)Position, Packet.Length);
+                int x = 0;
+                int y = 0;
+                int pos;
+                byte tmp;
 
-                int x, y, midpoint, pos;
-                byte tmp = 0;
+                byte[] k = ThreadLocalKey.Value;
 
-                x = y = 0;
+                Buffer.BlockCopy(key, 0, k, 0, 256);
 
-                midpoint = Packet.Length / 2;
+                int midpoint = length / 2;
 
-                for (pos = midpoint; pos < Packet.Length; ++pos)
+                for (pos = midpoint; pos < length; ++pos)
                 {
                     x = (x + 1) & 255;
-                    y = (y + Key[x]) & 255;
+                    y = (y + k[x]) & 255;
 
-                    tmp = Key[x];
+                    tmp = k[x];
 
-                    Key[x] = Key[y];
-                    Key[y] = tmp;
+                    k[x] = k[y];
+                    k[y] = tmp;
 
-                    tmp = (byte)(( Key[x] + Key[y] ) & 255);
-                    Packet[pos] ^= Key[tmp];
-                    y = (y + Packet[pos]) & 255;
+                    tmp = (byte)(( k[x] + k[y] ) & 255);
+                    packetBuffer[pos + offset] ^= k[tmp];
+                    y = (y + packetBuffer[pos + offset]) & 255;
                 }
 
                 for (pos = 0; pos < midpoint; ++pos)
                 {
                     x = (x + 1) & 255;
-                    y = (y + Key[x]) & 255;
+                    y = (y + k[x]) & 255;
 
-                    tmp = Key[x];
+                    tmp = k[x];
 
-                    Key[x] = Key[y];
-                    Key[y] = tmp;
+                    k[x] = k[y];
+                    k[y] = tmp;
 
-                    tmp = (byte)((Key[x] + Key[y]) & 255);
-                    Packet[pos] ^= Key[tmp];
-                    y = (y + Packet[pos]) & 255; 
+                    tmp = (byte)((k[x] + k[y]) & 255);
+                    packetBuffer[pos + offset] ^= k[tmp];
+                    y = (y + packetBuffer[pos + offset]) & 255; 
                 }
-
-                return new PacketIn(Packet,0,Packet.Length);
             }
             catch(Exception e)
             {
-                Log.Error("PacketIn","DecryptMythicRC4 : Failled !" + e.ToString());
+                Log.Error("PacketIn","DecryptMythicRC4 : Failed !" + e);
             }
-
-            return null;
         }
 
         #endregion

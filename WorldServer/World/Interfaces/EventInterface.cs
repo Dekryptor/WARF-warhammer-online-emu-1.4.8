@@ -1,121 +1,120 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-
-using Common;
+using System.Diagnostics;
 using FrameWork;
 
 namespace WorldServer
 {
     public enum EventName
     {
-        ON_CREATE,
-        ON_LOAD_START,
-        ON_LOAD_FINISH,
+        OnRemoveFromWorld,  // Pet Dismissal (buff should handle?)
 
-        ON_FIRST_ENTER_WORLD,
-        ON_ENTER_WORLD,
-        ON_REMOVE_FROM_WORLD,
+        OnMove, 
+        OnStopMove,  // Unused
+        // ON_CHANGE_OFFSET,
+        // ON_CHANGE_ZONE,
 
-        ON_MOVE,
-        ON_STOP_MOVE,
-        ON_CHANGE_OFFSET,
-        ON_CHANGE_ZONE,
+        OnEnterCombat,  // Unused
+        OnDealDamage,
+        OnReceiveDamage,
+        OnDealHeal,
+        OnReceiveHeal,
+        OnTargetDie,
+        OnLeaveCombat,
 
-        ON_ENTER_COMBAT,
-        ON_DEAL_DAMAGE,
-        ON_RECEIVE_DAMAGE,
-        ON_DEAL_HEAL,
-        ON_RECEIVE_HEAL,
-        ON_TARGET_DIE,
-        ON_LEAVE_COMBAT,
+        OnDie,
+        OnKill,
 
-        ON_REZURECT,
-        ON_DIE,
+        OnAddXP, // Args = XP
+        OnAddRenown, // Args = Renown
 
-        ON_GENERATE_LOOT, // Sender = Killer, Obj = Loot()
+        OnAcceptQuest, // Unused - Sender = Player, Obj = Character_Quest
+        OnDeclineQuest,// Unused -  Sender = Player, Obj = Character_Quest
+        OnDoneQuest,  // Unused
+        OnAbortQuest, // Unused - Sender = Player, Obj = Character_Quest
 
-        ON_ACCEPT_QUEST, // Sender = Player, Obj = Character_Quest
-        ON_DECLINE_QUEST,// Sender = Player, Obj = Character_Quest
-        ON_DONE_QUEST, 
-        ON_ABORD_QUEST, // Sender = Player, Obj = Character_Quest
+        Playing,
+        Leave,
+        OnLevelUp,
 
-        PLAYING,
-        LEAVE,
-        ON_LEVEL_UP,
+        ArriveAtTarget,  // Unused
+        OnWalkTo,  // Unused
+        OnWalk,  // Unused
 
-        ARRIVE_AT_TARGET,
-        ON_WALK_TO,
-        ON_WALK,
+        OnStartCasting,  // Unused
 
-        ON_START_CASTING,
-        ON_CAST,
+        OnLeaveGroup  // Unused
+        ,
+        OnOuterDoorDestroyed
     };
 
     public delegate void EventDelegate();
+    public delegate void EventDelegateEx(object userData);
 
     public class EventInfo
     {
-        public int Interval;
+        public readonly int Interval;
         public int Count;
-        public int BaseCount;
-        public EventDelegate Del;
-        private long NextExecute = 0;
-        public bool ToDelete = false;
+        public readonly int BaseCount;
+        public readonly EventDelegate Del;
+        public readonly EventDelegateEx DelEx;
+        private long _nextExecute;
+        public bool ToDelete;
+        public readonly object UserData;
 
-        public EventInfo(EventDelegate Del,int Interval, int Count)
+        public EventInfo(EventDelegate del,int interval, int count)
         {
-            this.Del = Del;
-            this.Interval = Interval;
-            this.Count = Count;
-            this.BaseCount = Count;
-
-            if (Interval == 0 )
+            Del = del;
+            Interval = interval;
+            Count = count;
+            BaseCount = count;
+            if (interval == 0 )
                 ToDelete = true;
 
             //Log.Success("AddEvent", "Del =" + Del.Method.Name + ",Name" + Del.Target.ToString());
         }
 
-        public bool Update(long Tick)
+        public EventInfo(EventDelegateEx del, int interval, int count, object userData)
+        {
+            DelEx = del;
+            Interval = interval;
+            Count = count;
+            BaseCount = count;
+            UserData = userData;
+            if (interval == 0)
+                ToDelete = true;
+
+            //Log.Success("AddEvent", "Del =" + Del.Method.Name + ",Name" + Del.Target.ToString());
+        }
+
+        /// <summary>
+        /// Checks if associated delegate have to be invoked
+        /// and updates this object's state.
+        /// </summary>
+        /// <param name="tick">Current timestamp</param>
+        /// <returns>True if this object has to be removed from events list.</returns>
+        public bool Update(long tick)
         {
             if (ToDelete)
                 return true;
 
-            if (NextExecute == 0)
-                NextExecute = Tick + Interval;
+            if (_nextExecute == 0)
+                _nextExecute = tick + Interval;
 
-            if (NextExecute <= Tick)
+            if (_nextExecute <= tick)
             {
                 if(BaseCount > 0)
                     --Count;
 
-                if (Del != null)
-                    Del.Invoke();
+                Del?.Invoke();
 
-                NextExecute = Tick + Interval;
+                if(UserData != null)
+                    DelEx?.Invoke(UserData);
+
+                _nextExecute = tick + Interval;
             }
 
-            if (Count <= 0 && this.BaseCount != 0)
+            if (Count <= 0 && BaseCount != 0)
                 ToDelete = true;
 
             return ToDelete;
@@ -124,149 +123,264 @@ namespace WorldServer
 
     public class EventInterface : BaseInterface
     {
-        static public Dictionary<uint, EventInterface> _EventInterfaces = new Dictionary<uint, EventInterface>();
+        //#error EventInterfaces are never removed
+        public static Dictionary<uint, EventInterface> EventInterfaces = new Dictionary<uint, EventInterface>();
 
-        static public EventInterface GetEventInterface(uint CharacterId)
+        public static EventInterface GetEventInterface(uint characterId)
         {
-            lock (_EventInterfaces)
+            lock (EventInterfaces)
             {
-                if (!_EventInterfaces.ContainsKey(CharacterId))
-                    _EventInterfaces.Add(CharacterId, new EventInterface());
+                if (!EventInterfaces.ContainsKey(characterId))
+                    EventInterfaces.Add(characterId, new EventInterface());
 
-                return _EventInterfaces[CharacterId];
+                return EventInterfaces[characterId];
             }
         }
 
-        public delegate bool EventNotify(Object Obj,object Args); // True si il doit être delete apres la notification
-
-        public EventInterface() : base()
-        {
-
-        }
+        /// <summary>
+        /// <para>A delegate representing a generic event.</para>
+        /// <para>Return true in order to delete the event after it's been fired.</para>
+        /// </summary>
+        public delegate bool EventNotify(Object obj, object args);
 
         public override void Stop()
         {
-            Running = false;
+            _running = false;
 
-            lock (_Events)
-                _Events.Clear();
+            if (_hasLock)
+                throw new InvalidOperationException("Stop() was called from an event in the EventInterface");
 
-            lock (_Notify)
-                _Notify.Clear();
+            lock (_eventList)
+                _eventList.Clear();
+
+            lock (_notify)
+                _notify.Clear();
+
+            lock (_forceNotify)
+                _forceNotify.Clear();
 
             base.Stop();
         }
 
         public void Start()
         {
-            Running = true;
+            _running = true;
         }
 
         #region Events
 
-        private bool Running = true;
-        public List<EventInfo> _Events = new List<EventInfo>();
-        public override void Update(long Tick)
+        private bool _running = true;
+        private readonly List<EventInfo> _eventList = new List<EventInfo>();
+
+        private bool _hasLock;
+
+        /// <summary>
+        /// Updates the interface state, firing registered events that are ready.
+        /// </summary>
+        /// <param name="tick">Current timestamp</param>
+        public override void Update(long tick)
         {
-            if (!Running)
+            if (!_running)
+            {
+                if (_eventList.Count > 0)
+                {
+                    lock (_eventList)
+                        _eventList.Clear();
+                }
+
+                return;
+            }
+
+            if (_eventList.Count == 0)
                 return;
 
-            lock (_Events)
-                _Events.RemoveAll(Info => !Running || Info.Update(Tick));
+            lock (_eventList)
+            {
+                _hasLock = true;
+                for (int i = _eventList.Count - 1; i >= 0; --i)
+                {
+                    if (!_running || _eventList[i].Update(tick))
+                        _eventList.RemoveAt(i);
+                }
+                _hasLock = false;
+            }
         }
-        public void AddEvent(EventDelegate Del, int Interval, int Count)
+
+        /// <summary>
+        /// Registers a new delayed event.
+        /// </summary>
+        /// <param name="del">Delegate to invoke when event is fired</param>
+        /// <param name="interval">LastUpdatedTime before first execution and between each execution</param>
+        /// <param name="count">Number of expected executions, if 0 executions has no limit</param>
+        /// <param name="userData">Custom user data</param>
+        public void AddEvent(EventDelegate del, int interval, int count)
         {
-            lock (_Events)
-                _Events.Add(new EventInfo(Del, Interval, Count));
+            lock (_eventList)
+                _eventList.Add(new EventInfo(del, interval, count));
         }
-        public void RemoveEvent(EventDelegate Del)
+
+        /// <summary>
+        /// Registers a new delayed event expecting user data.
+        /// </summary>
+        /// <param name="del">Delegate to invoke when event is fired</param>
+        /// <param name="interval">LastUpdatedTime before first execution and between each execution</param>
+        /// <param name="count">Number of expected executions, if 0 executions has no limit</param>
+        /// <param name="userData">Custom user data</param>
+        public void AddEvent(EventDelegateEx del, int interval, int count, object userData)
         {
-            lock (_Events)
-                _Events.RemoveAll(Info => Info.Del == Del);
+            lock (_eventList)
+                _eventList.Add(new EventInfo(del, interval, count, userData));
         }
-        public bool HasEvent(EventDelegate Del)
+
+        public void RemoveEvent(EventDelegate del)
         {
-            lock (_Events)
-                return _Events.Find(info => info.Del == Del) != null;
+            lock (_eventList)
+                for (int i = _eventList.Count - 1; i >= 0; --i)
+                {
+                    if (_eventList[i].Del == del)
+                        _eventList[i].ToDelete = true;
+                }
+        }
+
+        public void RemoveEvent(EventDelegateEx del)
+        {
+            lock (_eventList)
+                for (int i = _eventList.Count - 1; i >= 0; --i)
+                {
+                    if (_eventList[i].DelEx == del)
+                        _eventList[i].ToDelete = true;
+                }
+        }
+
+        public bool HasEvent(EventDelegate del)
+        {
+            lock (_eventList)
+            {
+                for (int i = 0; i < _eventList.Count; ++i)
+                {
+                    if (_eventList[i].Del == del)
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        public bool HasEvent(EventDelegateEx del)
+        {
+            lock (_eventList)
+            {
+                for (int i = 0; i < _eventList.Count; ++i)
+                {
+                    if (_eventList[i].DelEx == del)
+                        return true;
+                }
+            }
+            return false;
         }
 
         #endregion
 
         #region Notify
 
-        public Dictionary<string,List<EventNotify>> _Notify = new Dictionary<string,List<EventNotify>>();
-        public Dictionary<string, List<EventNotify>> _ForceNotify = new Dictionary<string, List<EventNotify>>();
+        private readonly Dictionary<int, List<EventNotify>> _notify = new Dictionary<int, List<EventNotify>>();
+        private readonly Dictionary<int, List<EventNotify>> _forceNotify = new Dictionary<int, List<EventNotify>>();
 
-        public void Notify(EventName Name,Object Sender, object Args)
+        public void Notify(EventName name, Object sender, object args)
         {
-           // Log.Info("Notify", "[" + (Obj != null ? Obj.Name : "") + "] Appel de :" + EventName);
+            List<EventNotify> eventNotifies;
+            int i, count;
 
-            List<EventNotify> L;
-            lock (_Notify)
+            lock (_notify)
             {
-                if (_Notify.TryGetValue(Name.ToString(), out L))
-                    L.RemoveAll(Event => Event.Invoke(Sender, Args));
-            }
-
-            lock (_ForceNotify)
-            {
-                if (_ForceNotify.TryGetValue(Name.ToString(), out L))
-                    L.RemoveAll(Event => Event.Invoke(Sender, Args));
-            }
-        }
-
-        public void AddEventNotify(EventName Name,EventNotify Event)
-        {
-            AddEventNotify(Name, Event, false);
-        }
-        public void AddEventNotify(EventName Name, EventNotify Event, bool Force)
-        {
-            //if(_Owner.IsPlayer())
-            //Log.Info("AddEventNotify", "[" + (_Owner != null ? _Owner.Name : "") + "] Add de :" + EventName);
-
-            List<EventNotify> L;
-            if (!Force)
-            {
-                lock (_Notify)
+                if (_notify.TryGetValue((int) name, out eventNotifies))
                 {
-                    if (!_Notify.TryGetValue(Name.ToString(), out L))
+                    for (i = 0; i < eventNotifies.Count; ++i)
                     {
-                        L = new List<EventNotify>();
-                        _Notify.Add(Name.ToString(), L);
+                        EventNotify target = eventNotifies[i];
+                        if (target.Invoke(sender, args))
+                        {
+                            if (ReferenceEquals(eventNotifies[i], target))
+                                eventNotifies.RemoveAt(i);
+                            else
+                                eventNotifies.Remove(target);
+                            --i;
+                        }
+                    }
+                }
+            }
+
+            lock (_forceNotify)
+            {
+                if (_forceNotify.TryGetValue((int) name, out eventNotifies))
+                {
+                    for (i = 0; i < eventNotifies.Count; ++i)
+                    {
+                        EventNotify target = eventNotifies[i];
+                        if (target.Invoke(sender, args))
+                        {
+                            if (ReferenceEquals(eventNotifies[i], target))
+                                eventNotifies.RemoveAt(i);
+                            else
+                                eventNotifies.Remove(target);
+                            --i;
+                        }
+                    }
+                }
+            }
+        }
+
+        public void AddEventNotify(EventName name, EventNotify Event)
+        {
+            AddEventNotify(name, Event, false);
+        }
+
+        public void AddEventNotify(EventName name, EventNotify Event, bool force)
+        {
+            List<EventNotify> eventNotifies;
+
+            if (!force)
+            {
+                lock (_notify)
+                {
+                    if (!_notify.TryGetValue((int)name, out eventNotifies))
+                    {
+                        eventNotifies = new List<EventNotify>();
+                        _notify.Add((int)name, eventNotifies);
                     }
 
-                    if(!L.Contains(Event))
-                        L.Add(Event);
+                    if (!eventNotifies.Contains(Event))
+                        eventNotifies.Add(Event);
                 }
             }
             else
             {
-                lock (_ForceNotify)
+                lock (_forceNotify)
                 {
-                    if (!_ForceNotify.TryGetValue(Name.ToString(), out L))
+                    if (!_forceNotify.TryGetValue((int)name, out eventNotifies))
                     {
-                        L = new List<EventNotify>();
-                        _ForceNotify.Add(Name.ToString(), L);
+                        eventNotifies = new List<EventNotify>();
+                        _forceNotify.Add((int)name, eventNotifies);
                     }
 
-                    if (!L.Contains(Event))
-                        L.Add(Event);
+                    if (!eventNotifies.Contains(Event))
+                        eventNotifies.Add(Event);
                 }
             }
         }
-        public void RemoveEventNotify(EventName Name, EventNotify Event)
+
+        public void RemoveEventNotify(EventName name, EventNotify Event)
         {
-            List<EventNotify> L;
-            lock (_Notify)
+            List<EventNotify> l;
+            lock (_notify)
             {
-                if (_Notify.TryGetValue(Name.ToString(), out L))
-                    L.Remove(Event);
+                if (_notify.TryGetValue((int)name, out l))
+                    l.Remove(Event);
             }
 
-            lock (_ForceNotify)
+            lock (_forceNotify)
             {
-                if (_ForceNotify.TryGetValue(Name.ToString(), out L))
-                    L.Remove(Event);
+                if (_forceNotify.TryGetValue((int)name, out l))
+                    l.Remove(Event);
             }
         }
 

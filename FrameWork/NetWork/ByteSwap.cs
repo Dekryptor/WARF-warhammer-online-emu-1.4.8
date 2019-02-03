@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,20 +23,19 @@ namespace ByteOperations
 {
     public class ByteSwap
     {
-        public static UInt16 Swap(UInt16 input)
+        public static ushort Swap(ushort input)
         {
-            return ((UInt16)(
+            return ((ushort)(
             ((0xFF00 & input) >> 8) |
             ((0x00FF & input) << 8)));
         }
 
-        public static UInt32 Swap(UInt32 input)
+        public static uint Swap(uint input)
         {
-            return ((UInt32)(
-            ((0xFF000000 & input) >> 24) |
-            ((0x00FF0000 & input) >> 8) |
-            ((0x0000FF00 & input) << 8) |
-            ((0x000000FF & input) << 24)));
+            return ((0xFF000000 & input) >> 24) |
+                   ((0x00FF0000 & input) >> 8) |
+                   ((0x0000FF00 & input) << 8) |
+                   ((0x000000FF & input) << 24);
         }
 
         public static float Swap(float input)
@@ -110,7 +107,7 @@ namespace ByteOperations
             uint n = (uint)bs[0] << 24;
             n |= (uint)bs[1] << 16;
             n |= (uint)bs[2] << 8;
-            n |= (uint)bs[3];
+            n |= bs[3];
             return n;
         }
 
@@ -119,7 +116,7 @@ namespace ByteOperations
             uint n = (uint)bs[off] << 24;
             n |= (uint)bs[++off] << 16;
             n |= (uint)bs[++off] << 8;
-            n |= (uint)bs[++off];
+            n |= bs[++off];
             return n;
         }
 
@@ -127,14 +124,14 @@ namespace ByteOperations
         {
             uint hi = BE_To_UInt32(bs);
             uint lo = BE_To_UInt32(bs, 4);
-            return ((ulong)hi << 32) | (ulong)lo;
+            return ((ulong)hi << 32) | lo;
         }
 
         public static ulong BE_To_UInt64(byte[] bs, int off)
         {
             uint hi = BE_To_UInt32(bs, off);
             uint lo = BE_To_UInt32(bs, off + 4);
-            return ((ulong)hi << 32) | (ulong)lo;
+            return ((ulong)hi << 32) | lo;
         }
 
         public static void UInt64_To_BE(ulong n, byte[] bs)
@@ -167,7 +164,7 @@ namespace ByteOperations
 
         public static uint LE_To_UInt32(byte[] bs)
         {
-            uint n = (uint)bs[0];
+            uint n = bs[0];
             n |= (uint)bs[1] << 8;
             n |= (uint)bs[2] << 16;
             n |= (uint)bs[3] << 24;
@@ -176,7 +173,7 @@ namespace ByteOperations
 
         public static uint LE_To_UInt32(byte[] bs, int off)
         {
-            uint n = (uint)bs[off];
+            uint n = bs[off];
             n |= (uint)bs[++off] << 8;
             n |= (uint)bs[++off] << 16;
             n |= (uint)bs[++off] << 24;
@@ -187,14 +184,14 @@ namespace ByteOperations
         {
             uint lo = LE_To_UInt32(bs);
             uint hi = LE_To_UInt32(bs, 4);
-            return ((ulong)hi << 32) | (ulong)lo;
+            return ((ulong)hi << 32) | lo;
         }
 
         public static ulong LE_To_UInt64(byte[] bs, int off)
         {
             uint lo = LE_To_UInt32(bs, off);
             uint hi = LE_To_UInt32(bs, off + 4);
-            return ((ulong)hi << 32) | (ulong)lo;
+            return ((ulong)hi << 32) | lo;
         }
 
         public static void UInt64_To_LE(ulong n, byte[] bs)

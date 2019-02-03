@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using System.IO;
@@ -26,7 +7,7 @@ using System.Net.Sockets;
 using System.Collections;
 using System.Threading;
 using System.Reflection;
-
+using System.Linq;
 
 namespace FrameWork
 {
@@ -34,18 +15,18 @@ namespace FrameWork
     {
         #region Manager
 
-        static private Dictionary<string, TCPManager> _Tcps = new Dictionary<string, TCPManager>();
-        static private TCPManager ConvertTcp<T>() where T : TCPManager, new()
+        private static Dictionary<string, TCPManager> _Tcps = new Dictionary<string, TCPManager>();
+        private static TCPManager ConvertTcp<T>() where T : TCPManager, new()
         {
             if (!typeof(T).IsSubclassOf(typeof(TCPManager)))
                 return null;
 
             T Tcp = new T();
-            TCPManager TTcp = (TCPManager)Tcp;
+            TCPManager TTcp = Tcp;
 
             return TTcp;
         }
-        static public bool Listen<T>(int port, string Name) where T : TCPManager, new()
+        public static bool Listen<T>(int port, string Name) where T : TCPManager, new()
         {
             try
             {
@@ -70,13 +51,13 @@ namespace FrameWork
             }
             catch (Exception e)
             {
-                Log.Error("Listen", "Error : " + e.ToString());
+                Log.Error("Listen", "Error : " + e);
                 return false;
             }
 
             return true;
         }
-        static public bool Connect<T>(string IP, int port, string Name) where T : TCPManager, new()
+        public static bool Connect<T>(string IP, int port, string Name) where T : TCPManager, new()
         {
             if (Name.Length <= 0)
                 return false;
@@ -98,7 +79,7 @@ namespace FrameWork
 
             return true;
         }
-        static public T GetTcp<T>(string Name)
+        public static T GetTcp<T>(string Name)
         {
             if (_Tcps.ContainsKey(Name))
                 return (T)Convert.ChangeType(_Tcps[Name], typeof(T));
@@ -108,20 +89,22 @@ namespace FrameWork
 
         #endregion
 
-        private TcpListener Listener = null;
-        private Socket Client = null;
+        private TcpListener Listener;
+        private Socket Client;
         private readonly AsyncCallback _asyncAcceptCallback;
 
         private bool LoadCryptHandlers = true;
         private bool LoadPacketHandlers = true;
 
-        public readonly PacketFunction[] m_packetHandlers = new PacketFunction[0xFFFFFF];
-        public readonly Dictionary<string,ICryptHandler> m_cryptHandlers = new Dictionary<string,ICryptHandler>();
+        public readonly PacketFunction[] m_packetHandlers = new PacketFunction[0xFF];
+        private readonly byte[] stateRequirement = new byte[0xFF];
 
+        public readonly Dictionary<string,ICryptHandler> m_cryptHandlers = new Dictionary<string,ICryptHandler>();
+        private static readonly DateTime EpochDateTime = new DateTime(1970, 1, 1);
         #region Clients
 
         // Liste des clients connectés
-        static public int MAX_CLIENT = 65000;
+        public static int MAX_CLIENT = 65000;
 
         private ReaderWriterLockSlim ClientRWLock = new ReaderWriterLockSlim();
         public BaseClient[] Clients = new BaseClient[MAX_CLIENT];
@@ -212,21 +195,26 @@ namespace FrameWork
             _asyncAcceptCallback = new AsyncCallback(ConnectingThread);
         }
 
-        static public int GetTimeStamp()
+        public static int GetTimeStamp()
         {
-            return (int)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
+            return (int)(DateTime.UtcNow - EpochDateTime).TotalSeconds;
         }
 
-        static public long GetTimeStampMS()
+        public static long GetTimeStampMS()
         {
-            return (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds;
+            return (long)(DateTime.UtcNow - EpochDateTime).TotalMilliseconds;
+        }
+
+        public List<T> GetClients<T>() where T : BaseClient
+        {
+            return Clients.Where(e => e != null && e.Socket != null && e.Socket.Connected).Select(e => (T)e).ToList();
         }
 
         private bool InitSocket(int port)
         {
             try
             {
-                Listener = new TcpListener(port);
+                Listener = new TcpListener(IPAddress.Any, port);
                 Listener.Server.ReceiveBufferSize = BUF_SIZE;
                 Listener.Server.SendBufferSize = BUF_SIZE;
                 Listener.Server.NoDelay = false;
@@ -250,6 +238,9 @@ namespace FrameWork
                 IPHostEntry LSHOST = Dns.GetHostEntry(Ip);
 
                 IPEndPoint EndPoint = new IPEndPoint(LSHOST.AddressList[0], port);
+
+                Log.Error("InitSocket", $"{LSHOST.AddressList[0]}, {EndPoint.Address.ToString()}, {port}");
+
                 Client = new Socket(EndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
 
                 Client.Connect(EndPoint);
@@ -303,7 +294,7 @@ namespace FrameWork
         // Start Socket and threads
         public virtual bool Start(int port)
         {
-            Log.Info("TCPManager", "Starting...");
+            Log.Info("TCPManager", $"Starting...{port}");
 
             if (!InitSocket(port))
                 return false;
@@ -316,7 +307,7 @@ namespace FrameWork
                 Listener.Start();
                 Listener.BeginAcceptTcpClient(ConnectingThread, this);
 
-                Log.Success("TCPManager", "Server listening to : " + Listener.LocalEndpoint.ToString());
+                Log.Success("TCPManager", "Server listening to : " + Listener.LocalEndpoint);
             }
             catch (SocketException e)
             {
@@ -331,7 +322,7 @@ namespace FrameWork
         // Stop all threads and incomming connections
         public virtual void Stop()
         {
-            Log.Debug("TCPManager", "TCP Manager shutdown [" + Listener.LocalEndpoint.ToString() + "]");
+            Log.Debug("TCPManager", "TCP Manager shutdown [" + Listener.LocalEndpoint + "]");
 
             try
             {
@@ -357,21 +348,21 @@ namespace FrameWork
                         Clients[i] = null;
                     }
                 }
-
             }
-            
         }
 
+        // Unused
         public void SendToAll(PacketOut Packet)
         {
-            Packet.WritePacketLength();
+            if (!Packet.Finalized)
+                Packet.WritePacketLength();
 
             LockReadClients();
 
             for (int i = 0; i < Clients.Length; ++i)
             {
                 if (Clients[i] != null)
-                    Clients[i].SendTCP(Packet.ToArray());
+                    Clients[i].SendAsynchronousTCP(Packet.ToArray());
             }
 
             UnLockReadClients();
@@ -380,7 +371,7 @@ namespace FrameWork
         #region Packet buffer pool
 
         // Taille maximal des packets
-        public int BUF_SIZE = 65536;
+        public int BUF_SIZE = 65536; //131072;
 
         // Taille minimal du buffer pool
         public int POOL_SIZE = 1000;
@@ -394,7 +385,7 @@ namespace FrameWork
         }
 
         //  Allocation d'un nouveau packet
-        private bool AllocatePacketBuffers()
+        private void AllocatePacketBuffers()
         {
             m_packetBufPool = new Queue<byte[]>(POOL_SIZE);
             for (int i = 0; i < POOL_SIZE; i++)
@@ -402,9 +393,7 @@ namespace FrameWork
                 m_packetBufPool.Enqueue(new byte[BUF_SIZE]);
             }
 
-            Log.Debug("TCPManager", "Allocation of the buffer pool : " + POOL_SIZE.ToString());
-
-            return true;
+            Log.Debug("TCPManager", "Allocation of the buffer pool : " + POOL_SIZE);
         }
 
         // Demande d'un nouveau packet
@@ -412,13 +401,14 @@ namespace FrameWork
         {
             lock (m_packetBufPool)
             {
-                if (m_packetBufPool.Count > 0)
-                    return m_packetBufPool.Dequeue();
+                if (m_packetBufPool.Count < 1)
+                {
+                    Log.Notice("TCPManager", "The buffer pool is empty!");
+                    AllocatePacketBuffers();
+                }
+
+                return m_packetBufPool.Dequeue();
             }
-
-            Log.Notice("TCPManager", "The buffer pool is empty!");
-
-            return new byte[BUF_SIZE];
         }
 
         // Relachement d'un packet
@@ -447,7 +437,6 @@ namespace FrameWork
 
             try
             {
-            
                 if (Listener == null && Client == null)
                     return;
 
@@ -465,10 +454,10 @@ namespace FrameWork
                 {
                     string ip = sock.Connected ? sock.RemoteEndPoint.ToString() : "socket disconnected";
                     if(Listener != null)
-                        Log.Info("TCPManager", "New Connection : " + ip);
+                        Log.Debug("TCPManager", "New Connection : " + ip);
 
                     if(Client != null)
-                        Log.Info("TCPManager", "New connection to : " + ip);
+                        Log.Debug("TCPManager", "New connection to : " + ip);
 
                     baseClient = GetNewClient();
                     baseClient.Socket = sock;
@@ -476,17 +465,17 @@ namespace FrameWork
                     baseClient.OnConnect();
                     baseClient.BeginReceive();
                 }
-                catch (SocketException)
+                catch (SocketException e)
                 {
                     if (baseClient != null)
-                        Disconnect(baseClient);
+                        Disconnect(baseClient, $"ConnectingThread: { Enum.GetName(typeof(SocketError), e.ErrorCode) } ({ e.Message })");
                 }
                 catch (Exception e)
                 {
                     Log.Error("TCPManager", e.ToString());
 
                     if (baseClient != null)
-                        Disconnect(baseClient);
+                        Disconnect(baseClient, "Exception within ConnectingThread");
                 }
             }
             catch
@@ -511,14 +500,13 @@ namespace FrameWork
             }
         }
 
-        public virtual bool Disconnect(BaseClient baseClient)
+        public virtual bool Disconnect(BaseClient baseClient, string reason)
         {
-
             RemoveClient(baseClient);
 
             try
             {
-                baseClient.OnDisconnect();
+                baseClient.OnDisconnect(reason);
                 baseClient.CloseConnections();
             }
             catch (Exception e)
@@ -547,11 +535,15 @@ namespace FrameWork
                     foreach (MethodInfo m in type.GetMethods())
                         foreach (object at in m.GetCustomAttributes(typeof(PacketHandlerAttribute), false))
                         {
-                            PacketHandlerAttribute attr = at as PacketHandlerAttribute;
+                            PacketHandlerAttribute attr = (PacketHandlerAttribute) at;
                             PacketFunction handler = (PacketFunction)Delegate.CreateDelegate(typeof(PacketFunction), m);
 
-                            Log.Debug("TCPManager", "Registering handler for opcode : " + attr.Opcode.ToString("X8"));
+                            Log.Debug("TCPManager", $"Registering handler for opcode : " +
+                                                    $"{attr.Opcode.ToString("X8")} " +
+                                                    $"{handler.Method.Module}" +
+                                                    $"{handler.Method.DeclaringType.AssemblyQualifiedName}");
                             m_packetHandlers[attr.Opcode] = handler;
+                            stateRequirement[attr.Opcode] = (byte)attr.State;
                         }
                 }
             }
@@ -597,47 +589,68 @@ namespace FrameWork
         }
 
         public HashSet<ulong> Errors = new HashSet<ulong>();
-        public void HandlePacket(BaseClient client, PacketIn Packet)
+        public void HandlePacket(BaseClient client, PacketIn packet)
         {
-            if (client == null || Packet == null)
+            //#if DEBUG
+            Log.Info("HandlePacket", $"Packet : {packet.Opcode} ({packet.Opcode.ToString("X8")})");
+            Log.Dump("HandlePacket", packet.ToArray(), 0, packet.ToArray().Length);
+            //#endif
+
+            if (client == null)
             {
-                Log.Error("TCPManager", "Packet || Client == null");
+                Log.Error("TCPManager", "Client == null");
                 return;
             }
 
             PacketFunction packetHandler = null;
 
-            if (Packet.Opcode < (ulong)m_packetHandlers.Length)
-                packetHandler = m_packetHandlers[Packet.Opcode];
-            else if (!Errors.Contains(Packet.Opcode))
+            if (packet.Opcode < (ulong)m_packetHandlers.Length)
+                packetHandler = m_packetHandlers[packet.Opcode];
+            else if (!Errors.Contains(packet.Opcode))
             {
-                Errors.Add(Packet.Opcode);
-                Log.Error("TCPManager", "Can not handle :" + Packet.Opcode + "(" + Packet.Opcode.ToString("X8") + ")");
+                Errors.Add(packet.Opcode);
+                Log.Error("TCPManager", $"Can not handle :{packet.Opcode} ({packet.Opcode.ToString("X8")})");
             }
 
             if (packetHandler != null)
             {
-                PacketHandlerAttribute[] packethandlerattribs = (PacketHandlerAttribute[])packetHandler.GetType().GetCustomAttributes(typeof(PacketHandlerAttribute), true);
-                if (packethandlerattribs.Length > 0)
-                    if (packethandlerattribs[0].State > client.State)
-                    {
-                        Log.Error("TCPManager", "Can not handle packet ("+Packet.Opcode.ToString("X8")+"), Invalid client state ("+client.GetIp+")");
-                        return;
+                /*
+
+                The reflection code below seems to have been used to verify the client was in the correct state before the packet was handled.
+                However, it didn't actually work; eliminating the reflection and using an array implementation broke the emu and testing confirmed
+                the original check was broken, so I've eliminated it for now.
+
+
+                if (stateRequirement[packet.Opcode] > client.State)
+                {
+                    Log.Error("TCPManager", $"Can not handle packet ({packet.Opcode.ToString("X8")}), Invalid client state {client.State} (expected {stateRequirement[packet.Opcode]}) ({client.GetIp()})");
+                    PacketHandlerAttribute[] packethandlerattribs = (PacketHandlerAttribute[])packetHandler.GetType().GetCustomAttributes(typeof(PacketHandlerAttribute), true);
+                    if (packethandlerattribs.Length > 0)
+                    { 
+                        Log.Error("TCPManager", $"Old code provided state {packethandlerattribs[0].State}");
+                        if (packethandlerattribs[0].State > client.State)
+                            return;
                     }
+                    else
+                    {
+                        Log.Error("TCPManager", "Old code was stateless");
+                    }
+                }
+                */
 
                 try
                 {
-                    packetHandler.Invoke(client,Packet);
+                    packetHandler.Invoke(client,packet);
                 }
                 catch (Exception e)
                 {
-                    Log.Error("TCPManager","Packet handler error :"+ Packet.Opcode + " " + e.ToString() );
+                    Log.Error("TCPManager", $"Packet handler error :{packet.Opcode} {e}");
                 }
             }
-            else if (!Errors.Contains(Packet.Opcode))
+            else if (!Errors.Contains(packet.Opcode))
             {
-                Errors.Add(Packet.Opcode);
-                Log.Error("TCPManager", "Can not Handle opcode :" + Packet.Opcode + "(" + Packet.Opcode.ToString("X8") + ")");
+                Errors.Add(packet.Opcode);
+                Log.Error("TCPManager", $"Can not Handle opcode :{packet.Opcode} ({packet.Opcode.ToString("X8")})");
             }
         }
     }

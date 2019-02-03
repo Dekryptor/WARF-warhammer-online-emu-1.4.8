@@ -1,30 +1,31 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-
 using FrameWork;
+using GameData;
 
 namespace WorldServer
 {
-    public class AgressiveBrain : ABrain
+    public class AggressiveBrain : ABrain
     {
-        public AgressiveBrain(AIInterface Interface)
-            : base(Interface)
+        public AggressiveBrain(Unit myOwner)
+            : base(myOwner)
         {
 
         }
 
         public override void Think()
         {
-            if (Interface.Cbt.IsFighting())
-                return;
+            base.Think();
 
-            Unit Target = Interface.GetAttackableUnit();
-            if (Target == null)
-                return;
+            // Only bother to seek targets if we're actually being observed by a player
+            if (Combat.CurrentTarget == null && _unit.PlayersInRange.Count > 0)
+            {
+                if (_pet != null && (_pet.IsHeeling || ((CombatInterface_Pet)_pet.CbtInterface).IgnoreDamageEvents))
+                    return;
 
-            Interface.Cbt.CombatStart(Target);
+                Unit target = _unit.AiInterface.GetAttackableUnit();
+                if (target != null)
+                    _unit.AiInterface.ProcessCombatStart(target);
+            }
         }
     }
 }

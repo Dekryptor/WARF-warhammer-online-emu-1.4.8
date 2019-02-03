@@ -81,7 +81,7 @@ namespace FrameWork
 		internal int len;
 		
 		internal int[] tree; // pointer into tree
-		internal int tree_index = 0;
+		internal int tree_index;
 		internal int need; // bits needed
 		
 		internal int lit;
@@ -537,7 +537,7 @@ namespace FrameWork
 					if ((e & 16) != 0)
 					{
 						e &= 15;
-						c = tp[(tp_index + t) * 3 + 2] + ((int) b & inflate_mask[e]);
+						c = tp[(tp_index + t) * 3 + 2] + (b & inflate_mask[e]);
 						
 						b >>= e; k -= e;
 						

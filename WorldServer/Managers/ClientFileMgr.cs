@@ -1,31 +1,13 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
-
-using System;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Drawing;
 using System.IO;
-
+using System.Linq;
 using Common;
 using FrameWork;
+using Color = System.Drawing.Color;
+using WorldServer.Services.World;
 
 namespace WorldServer
 {
@@ -36,317 +18,354 @@ namespace WorldServer
         public ushort InfluenceId;
     }
 
+    /*
     public class MapPiece
     {
         public byte Id;
         public ushort ZoneId;
         public ushort PositionX, PositionY;
         public ushort SizeX, SizeY;
-        public System.Drawing.Color[,] Colors;
-        public Zone_Area OrderArea;
-        public Zone_Area DestruArea;
+        public Color[,] Colors;
+        public BitArray[] PieceMap { get; set; }
+        public Zone_Area Area;
 
-        public bool IsPvp(byte Realm)
+        public bool IsPvp(byte realm)
         {
-            if (OrderArea != null && OrderArea.Realm == Realm)
-                return false;
-
-            if (DestruArea != null && DestruArea.Realm == Realm)
+            if (!Program.Config.OpenRvR && Area != null && Area.Realm != 0)
                 return false;
 
             return true;
         }
 
-        public bool IsOn(ushort PinX, ushort PinY, ushort ZoneId)
+        public bool IsRvR()
         {
-            if (this.ZoneId != ZoneId)
-                return false;
-
-            if (PinX >= PositionX && PinX < PositionX + SizeX)
-            {
-                if (PinY >= PositionY && PinY < PositionY + SizeY)
-                {
-                    return true;
-                }
-            }
+            if (Area != null && Area.Realm == 0)
+                return true;
 
             return false;
         }
 
+        public bool IsOn(ushort pinX, ushort pinY, ushort zoneId)
+        {
+            if (ZoneId != zoneId)
+                return false;
+
+            if (pinX >= PositionX && pinX < PositionX + SizeX)
+            {
+                if (pinY >= PositionY && pinY < PositionY + SizeY && PieceMap[pinX - PositionX][pinY - PositionY])
+                    return true;
+            }
+
+            return false;
+        }
+        
+
         public override string ToString()
         {
-            return "Id:" + Id + ",Order:" + OrderArea + ",Destru:" + DestruArea;
+            return "Id:" + Id + ",Area:" + Area;
         }
     }
-
+    
+    */
     public class ClientZoneInfo
     {
         public ushort ZoneId;
         public string Folder;
         public List<AreaInfluence> Influences;
-        public List<MapPiece> Pieces;
         public List<Zone_Area> Areas;
-        public System.Drawing.Color[,] HeightMapOffset;
-        public System.Drawing.Color[,] HeightMapTerrain;
+        public List<PQuest_Info> PQAreas;
+        public Color[,] HeightMapOffset;
+        public Color[,] HeightMapTerrain;
+        public byte[,] AreaPixels = new byte[1024, 1024];
+        public byte[,] PQAreaPixels = new byte[1024, 1024];
 
-        public ClientZoneInfo(ushort ZoneId)
+        public ClientZoneInfo(ushort zoneId)
         {
-            this.ZoneId = ZoneId;
-            this.Influences = new List<AreaInfluence>();
-            this.Pieces = new List<MapPiece>();
-            this.Folder = Program.Config.ZoneFolder + "zone" + String.Format("{0:000}", ZoneId) + "/";
-            this.Areas = WorldMgr.GetZoneAreas(ZoneId);
+            ZoneId = zoneId;
+            Influences = new List<AreaInfluence>();
+            Folder = Program.Config.ZoneFolder + "zone" + string.Format("{0:000}", zoneId) + "/";
+            Areas = ZoneService.GetZoneAreas(zoneId).OrderBy(area => area.PieceId).ToList();
 
             try
             {
                 //LoadHeightMap();
                 LoadInfluences();
-                LoadMapPieces();
+                LoadAreaMap();
+                LoadPQAreaMap();
 
-                FrameWork.Log.Success("ClientFile", ZoneId + " Loaded " + Influences.Count + " Influence(s), " + Pieces + " MapPiece(s)");
+                //Log.Success("ClientFile", zoneId + " Loaded " + Influences.Count + " influence entries and " + Areas.Count + " area infos.");
             }
             catch (Exception e)
             {
-                FrameWork.Log.Error("ClientFile", e.ToString());
+                Log.Error("ClientFile", e.ToString());
             }
         }
 
         public void LoadHeightMap()
         {
-            int x, y;
-
-            string FilePath = Path.Combine(Folder, "offset.png");
-            if (File.Exists(FilePath))
+            string filePath = Path.Combine(Folder, "offset.png");
+            if (File.Exists(filePath))
             {
-                using (Bitmap Map = new Bitmap(FilePath))
+                int x, y;
+
+                using (Bitmap map = new Bitmap(filePath))
                 {
-                    HeightMapOffset = new System.Drawing.Color[Map.Width, Map.Height];
-                    for (x = 0; x < Map.Width; ++x)
+                    HeightMapOffset = new Color[map.Width, map.Height];
+                    for (x = 0; x < map.Width; ++x)
                     {
-                        for (y = 0; y < Map.Height; ++y)
+                        for (y = 0; y < map.Height; ++y)
                         {
-                            HeightMapOffset[x, y] = Map.GetPixel(x, y);
+                            HeightMapOffset[x, y] = map.GetPixel(x, y);
                         }
                     }
                 }
 
-                FilePath = Path.Combine(Folder, "terrain.png");
-                using (Bitmap Map = new Bitmap(FilePath))
+                filePath = Path.Combine(Folder, "terrain.png");
+                using (Bitmap map = new Bitmap(filePath))
                 {
-                    HeightMapTerrain = new System.Drawing.Color[Map.Width, Map.Height];
-                    for (x = 0; x < Map.Width; ++x)
+                    HeightMapTerrain = new Color[map.Width, map.Height];
+                    for (x = 0; x < map.Width; ++x)
                     {
-                        for (y = 0; y < Map.Height; ++y)
+                        for (y = 0; y < map.Height; ++y)
                         {
-                            HeightMapTerrain[x, y] = Map.GetPixel(x, y);
+                            HeightMapTerrain[x, y] = map.GetPixel(x, y);
                         }
                     }
                 }
             }
         }
 
-        public void LoadMapPieces()
+        public void LoadAreaMap()
         {
-            string FilePath = Path.Combine(Folder, "mappieces.csv");
-            if (!File.Exists(FilePath))
-                return;
-
-            int x, y;
-            using (FileStream Stream = File.OpenRead(FilePath))
+            string filePath = Path.Combine(Folder, "areas" + $"{ZoneId:000}" + ".png");
+            if (File.Exists(filePath))
             {
-                using (StreamReader Reader = new StreamReader(Stream))
+                //Log.Success("LoadAreaMap", "Loading area map for zone ID "+ZoneId);
+                using (Bitmap map = new Bitmap(filePath))
                 {
-                    Reader.ReadLine();
-                    string Line = null;
-                    while ((Line = Reader.ReadLine()) != null)
+                    for (int x = 0; x < 1024; ++x)
                     {
-                        string[] Datas = Line.Split(',');
-                        MapPiece Piece = new MapPiece();
-                        Piece.ZoneId = ZoneId;
-                        Piece.Id = byte.Parse(Datas[0]);
-                        Piece.PositionX = ushort.Parse(Datas[1]);
-                        Piece.PositionY = ushort.Parse(Datas[2]);
-                        Piece.SizeX = ushort.Parse(Datas[3]);
-                        Piece.SizeY = ushort.Parse(Datas[4]);
-                        FilePath = Path.Combine(Folder, "piece" + String.Format("{0:00}", Piece.Id) + ".jpg");
-                        using (Bitmap Map = new Bitmap(FilePath))
+                        for (int y = 0; y < 1024; ++y)
                         {
-                            Piece.Colors = new System.Drawing.Color[Map.Width, Map.Height];
-                            for (x = 0; x < Map.Width; ++x)
-                            {
-                                for (y = 0; y < Map.Height; ++y)
-                                {
-                                    Piece.Colors[x, y] = Map.GetPixel(x, y);
-                                }
-                            }
-
+                            Color curPx = map.GetPixel(x, y);
+                            AreaPixels[x, y] = (byte)(1 + (curPx.R >> 4) + (curPx.G >> 4));
                         }
-                        Pieces.Add(Piece);
-                        Piece.OrderArea = GetArea(Piece.Id, 1);
-                        Piece.DestruArea = GetArea(Piece.Id, 2);
                     }
                 }
+
+                //Log.Success("LoadAreaMap", "Loaded area map for zone ID " + ZoneId);
             }
+
+            //else Log.Error("LoadAreaMap", "No area map found for zone ID "+ZoneId);
+        }
+
+        //Use 1024x1024 PNG color overlay to define a PQ area.
+        //Color must be different for each pq for the pq to function correctly.
+        public void LoadPQAreaMap()
+        {
+            string filePath = Path.Combine(Folder, "pqarea" + $"{ZoneId:000}" + ".png");
+            if (File.Exists(filePath))
+            {
+                //Log.Success("LoadPQAreaMap", "Loading PQ area map for zone ID " + ZoneId);
+                using (Bitmap map = new Bitmap(filePath))
+                {
+                    for (int x = 0; x < 1024; ++x)
+                    {
+                        for (int y = 0; y < 1024; ++y)
+                        {
+                            Color curPx = map.GetPixel(x, y);
+                            PQAreaPixels[x, y] = (byte)(1 + (curPx.R >> 4) + (curPx.G >> 4));
+                        }
+                    }
+                }
+
+                //Log.Success("LoadPQAreaMap", "Loaded PQ area map for zone ID " + ZoneId);
+            }
+
+            //else Log.Error("LoadPQAreaMap", "No PQ area map found for zone ID " + ZoneId);
         }
 
         public void LoadInfluences()
         {
-            string FilePath = Path.Combine(Folder, "influenceids.csv");
-            if (!File.Exists(FilePath))
+            string filePath = Path.Combine(Folder, "influenceids.csv");
+            if (!File.Exists(filePath))
                 return;
 
-            using (FileStream Stream = File.OpenRead(FilePath))
+            using (FileStream stream = File.OpenRead(filePath))
             {
-                using (StreamReader Reader = new StreamReader(Stream))
+                using (StreamReader reader = new StreamReader(stream))
                 {
-                    Reader.ReadLine();
-                    string Line = null;
-                    while ((Line = Reader.ReadLine()) != null)
+                    reader.ReadLine();
+                    string line;
+                    while ((line = reader.ReadLine()) != null)
                     {
-                        string[] Datas = Line.Split(',');
-                        AreaInfluence Area = new AreaInfluence();
-                        Area.AreaNumber = ushort.Parse(Datas[0]);
-                        Area.Realm = byte.Parse(Datas[1]);
-                        Area.InfluenceId = ushort.Parse(Datas[2]);
-                        Influences.Add(Area);
+                        string[] datas = line.Split(',');
+                        AreaInfluence area = new AreaInfluence
+                        {
+                            AreaNumber = ushort.Parse(datas[0]),
+                            Realm = byte.Parse(datas[1]),
+                            InfluenceId = ushort.Parse(datas[2])
+                        };
+                        Influences.Add(area);
                     }
                 }
             }
         }
 
-        public Zone_Area GetArea(byte PieceId, byte Realm)
+        public Zone_Area GetZoneAreaFor(ushort pinX, ushort pinY, ushort zoneId,ushort pinz = 0)
         {
-            if(Areas != null)
-                return Areas.Find(info => info.PieceId == PieceId && info.Realm == Realm);
+            byte areaId = AreaPixels[pinX >> 6, pinY >> 6];
+           // Log.Error("areaid", "    " + areaId);
+           // fix for black craig keep in the dungeon
+            if(ZoneId == 3 && areaId > 20)
+            {
+                if(pinz < 8394)
+                    areaId = 3;
+                else
+                    areaId -= 15;
+            }
+            if (Areas == null)
+                return null;
+            foreach (Zone_Area info in Areas)
+                if (info.PieceId == areaId)
+                    return info;
             return null;
         }
 
-        public MapPiece GetWorldPiece(ushort PinX, ushort PinY, ushort ZoneId)
+        public byte GetPQAreaFor(ushort pinX, ushort pinY, ushort zoneId)
         {
-            PinX /= 64;
-            PinY /= 64;
-            foreach (MapPiece Piece in Pieces)
-            {
-                if (Piece.IsOn(PinX, PinY, ZoneId))
-                {
-                    if (Piece.Colors[PinX - Piece.PositionX, PinY - Piece.PositionY] != System.Drawing.Color.White)
-                        return Piece;
-                }
-            }
-
-            return null;
+            return PQAreaPixels[pinX >> 6, pinY >> 6];
         }
     }
 
-    public class HeighMapInfo
+    public class HeightMapInfo
     {
-        public HeighMapInfo(int ZoneID)
+        public HeightMapInfo(int zoneID)
         {
-            this.ZoneID = ZoneID;
+            ZoneID = zoneID;
         }
 
         public int ZoneID;
         public Bitmap Offset;
         public Bitmap Terrain;
 
-        private bool Loaded = false;
+        private bool _loaded;
 
-        public int GetHeight(int PinX, int PinY)
+        public int GetHeight(int pinX, int pinY)
         {
             Load();
 
             if (Offset == null || Terrain == null)
                 return -1;
 
-            PinX = (int)((float)PinX / 64f);
-            PinY = (int)((float)PinY / 64f);
+            pinX = (int)(pinX / 64f);
+            pinY = (int)(pinY / 64f);
+            Bitmap off = null;
+            lock (Offset)
+            { 
+                off = (Bitmap)Offset.Clone();
+            }
 
-            if (PinX < 0 || PinX > Offset.Width || PinX > Terrain.Width)
-                return -1;
+            Bitmap terr = null;
+            lock (Terrain)
+            {
+                terr = (Bitmap)Terrain.Clone();
+            }
 
-            if (PinY < 0 || PinY > Offset.Height || PinY > Terrain.Height)
+
+            try
+            {
+                if (pinX < 0 || pinX > off.Width || pinX > terr.Width)
+                    return -1;
+
+                if (pinY < 0 || pinY > off.Height || pinY > terr.Height)
+                    return -1;
+            }
+            catch
+            {
                 return -1;
+            }
 
             float fZValue = 0;
 
             try
             {
                 {
-                    System.Drawing.Color iColor = Offset.GetPixel(PinX, PinY);
+                    Color iColor = off.GetPixel(pinX, pinY);
                     fZValue += iColor.R * 31; // 0 -> 30
                 }
 
                 {
-                    System.Drawing.Color iColor = Terrain.GetPixel(PinX, PinY);
+                    Color iColor = terr.GetPixel(pinX, pinY);
                     fZValue += iColor.R;
                 }
             }
             catch (Exception e)
             {
-                FrameWork.Log.Error("HeightMap", e.ToString());
+                Log.Error("HeightMap", e.ToString());
             }
 
             fZValue *= 16;
 
-            return (int)fZValue-30;
+            return (int)fZValue - 30;
         }
 
         public void Load()
         {
-            if (Loaded)
+            if (_loaded)
                 return;
 
-            Loaded = true;
+            _loaded = true;
 
             try
             {
-                Offset = new Bitmap(Program.Config.ZoneFolder + "zone" + String.Format("{0:000}", ZoneID) + "/offset.png"); // /zones/zone003/offset.png
-                Terrain = new Bitmap(Program.Config.ZoneFolder + "zone" + String.Format("{0:000}", ZoneID) + "/terrain.png"); // /zones/zone003/offset.png
+                Offset = new Bitmap(Program.Config.ZoneFolder + "zone" + string.Format("{0:000}", ZoneID) + "/offset.png"); // /zones/zone003/offset.png
+                Terrain = new Bitmap(Program.Config.ZoneFolder + "zone" + string.Format("{0:000}", ZoneID) + "/terrain.png"); // /zones/zone003/offset.png
             }
-            catch(Exception e)
+            catch (Exception e)
             {
-                FrameWork.Log.Error("HeightMap", "[" + ZoneID + "] Invalid HeightMap \n " + e.ToString());
+                Log.Error("HeightMap", "[" + ZoneID + "] Invalid HeightMap \n " + e);
             }
         }
     }
 
-    static public class ClientFileMgr
+    public static class ClientFileMgr
     {
         #region HeightMap Images
 
-        static public Dictionary<int, HeighMapInfo> Heights = new Dictionary<int, HeighMapInfo>();
+        public static Dictionary<int, HeightMapInfo> Heights = new Dictionary<int, HeightMapInfo>();
 
-        static public int GetHeight(int ZoneID, int PinX, int PinY)
+        public static int GetHeight(int zoneID, int pinX, int pinY)
         {
-            HeighMapInfo Info;
-            if (!Heights.TryGetValue(ZoneID, out Info))
+            HeightMapInfo info;
+            if (!Heights.TryGetValue(zoneID, out info))
             {
-                FrameWork.Log.Success("HeightMap", "["+ZoneID+"] Loading Height Map..");
-                Info = new HeighMapInfo(ZoneID);
-                Heights.Add(ZoneID, Info);
+                Log.Success("HeightMap", "[" + zoneID + "] Loading Height Map..");
+                info = new HeightMapInfo(zoneID);
+                Heights.Add(zoneID, info);
             }
 
-            return Info.GetHeight(PinX, PinY);
+            return info.GetHeight(pinX, pinY) / 2;
         }
 
         #endregion
 
         #region MapPiece and CSV
 
-        static public Dictionary<ushort, ClientZoneInfo> ClientZoneFiles = new Dictionary<ushort, ClientZoneInfo>();
+        public static Dictionary<ushort, ClientZoneInfo> ClientZoneFiles = new Dictionary<ushort, ClientZoneInfo>();
 
-        static public ClientZoneInfo GetZoneInfo(ushort ZoneId)
+        public static ClientZoneInfo GetZoneInfo(ushort zoneId)
         {
-            ClientZoneInfo Info;
+            ClientZoneInfo info;
             lock (ClientZoneFiles)
             {
-                if (!ClientZoneFiles.TryGetValue(ZoneId, out Info))
+                if (!ClientZoneFiles.TryGetValue(zoneId, out info))
                 {
-                    Info = new ClientZoneInfo(ZoneId);
-                    ClientZoneFiles.Add(ZoneId, Info);
+                    info = new ClientZoneInfo(zoneId);
+                    ClientZoneFiles.Add(zoneId, info);
                 }
             }
-            return Info;
+            return info;
         }
 
         #endregion

@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,17 +25,17 @@ using FrameWork;
 namespace Common
 {
     // Valeur Fixe d'un character
-    [DataTable(PreCache = false, TableName = "characterinfo_items", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "characterinfo_items", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class CharacterInfo_item : DataObject
     {
         private byte _CareerLine;
         private uint _Entry;
-        private UInt16 _SlotId;
-        private UInt16 _Count;
+        private ushort _SlotId;
+        private ushort _Count;
         private uint _ModelId;
 
-        [DataElement(AllowDbNull = false)]
+        [PrimaryKey]
         public byte CareerLine
         {
             get { return _CareerLine; }
@@ -51,15 +49,15 @@ namespace Common
             set { _Entry = value; Dirty = true; }
         }
 
-        [DataElement(AllowDbNull = false)]
-        public UInt16 SlotId
+        [PrimaryKey]
+        public ushort SlotId
         {
             get { return _SlotId; }
             set { _SlotId = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
-        public UInt16 Count
+        public ushort Count
         {
             get { return _Count; }
             set { _Count = value; Dirty = true; }

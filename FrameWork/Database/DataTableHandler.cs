@@ -5,16 +5,14 @@ namespace FrameWork
 {
     public class DataTableHandler
     {
-        private readonly ICache _cache;
-        private readonly DataSet _dset;
         private readonly Hashtable _precache;
         private bool _hasRelations;
 
         public DataTableHandler(DataSet dataSet)
         {
-            _cache = new SimpleCache();
+            Cache = new SimpleCache();
             _precache = new Hashtable();
-            _dset = dataSet;
+            DataSet = dataSet;
             _hasRelations = false;
         }
 
@@ -24,26 +22,22 @@ namespace FrameWork
             set { _hasRelations = false; }
         }
 
-        public ICache Cache
-        {
-            get { return _cache; }
-        }
+        public ICache Cache { get; }
 
-        public DataSet DataSet
-        {
-            get { return _dset; }
-        }
+        public DataSet DataSet { get; }
 
         public bool UsesPreCaching { get; set; }
 
+        public bool RequiresObjectId { get; set; }
+
         public void SetCacheObject(object key, DataObject obj)
         {
-            _cache[key] = obj;
+            Cache[key] = obj;
         }
 
         public DataObject GetCacheObject(object key)
         {
-            return _cache[key] as DataObject;
+            return Cache[key] as DataObject;
         }
 
         public void SetPreCachedObject(object key, DataObject obj)
@@ -55,5 +49,9 @@ namespace FrameWork
         {
             return _precache[key] as DataObject;
         }
+
+
+        // Method of loading items from this table
+        public EBindingMethod BindingMethod { get; set; }
     }
 }

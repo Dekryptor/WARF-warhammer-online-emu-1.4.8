@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -26,24 +7,27 @@ using FrameWork;
 
 namespace Common
 {
-    // Valeur Fixe d'un character
-    [DataTable(PreCache = false, TableName = "zone_Infos", DatabaseName = "World")]
+    // Fixed value of a character
+    [DataTable(PreCache = false, TableName = "zone_infos", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Zone_Info : DataObject
     {
-        private UInt16 _ZoneId;
+        private ushort _ZoneId;
         private string _Name;
         private byte _MinLevel;
         private byte _MaxLevel;
         private int _Type;
+        private byte _Pairing;
         private int _Tier;
-        private UInt16 _Price;
-        private UInt16 _Region;
+        private ushort _Price;
+        private ushort _Region;
         private int _OffX;
         private int _OffY;
+        private bool _Collision;
+        private bool _illegal;
 
-        [DataElement(Unique = false)]
-        public UInt16 ZoneId
+        [PrimaryKey]
+        public ushort ZoneId
         {
             get { return _ZoneId; }
             set { _ZoneId = value; Dirty = true; }
@@ -85,14 +69,21 @@ namespace Common
         }
 
         [DataElement(AllowDbNull = false)]
-        public UInt16 Price
+        public byte Pairing
+        {
+            get { return _Pairing; }
+            set { _Pairing = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public ushort Price
         {
             get { return _Price; }
             set { _Price = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
-        public UInt16 Region
+        public ushort Region
         {
             get { return _Region; }
             set { _Region = value; Dirty = true; }
@@ -110,6 +101,20 @@ namespace Common
         {
             get { return _OffY; }
             set { _OffY = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public bool Collision
+        {
+            get { return _Collision; }
+            set { _Collision = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public bool Illegal
+        {
+            get { return _illegal; }
+            set { _illegal = value; Dirty = true; }
         }
     }
 }

@@ -7,21 +7,21 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "chapter_rewards", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "chapter_rewards", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Chapter_Reward : DataObject
     {
-        [DataElement()]
-        public UInt32 Entry;
+        [PrimaryKey]
+        public uint Entry { get; set; }
 
-        [DataElement()]
-        public byte Realm;
+        [DataElement]
+        public byte Realm { get; set; }
 
-        [DataElement()]
-        public UInt32 ItemId;
+        [PrimaryKey]
+        public uint ItemId { get; set; }
 
-        [DataElement()]
-        public UInt32 InfluenceCount;
+        [DataElement]
+        public uint InfluenceCount { get; set; }
 
         public Chapter_Info Chapter;
         public Item_Info Item;

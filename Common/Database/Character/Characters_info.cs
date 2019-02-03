@@ -1,193 +1,479 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-
 using FrameWork;
 
 namespace Common
 {
-    // Valeur Changante d'un character
+    // Fixed value of a character
     [DataTable(PreCache = false, TableName = "characters_value", DatabaseName = "Characters")]
     [Serializable]
     public class Character_value : DataObject
     {
-        private UInt32 _CharacterId;
-        private byte _Level;
-        private uint _Xp;
-        private int _XpMode;
-        private int _RestXp;
-        private uint _Renown;
-        private byte _RenownRank;
-        private uint _Money;
-        private int _Speed;
-        private int _RegionId;
-        private UInt16 _ZoneId;
-        private int _WorldX;
-        private int _WorldY;
-        private int _WorldZ;
-        private int _WorldO;
-        private ushort _RallyPoint;
-        private uint _Skills;
-        private byte _BagBuy;
-        private bool _Online;
+        private uint _characterId;
+        private byte _level;
+        private uint _xp;
+        private int _xpMode;
+        private uint _restXp;
+        private uint _renown;
+        private byte _renownRank;
+        private uint _money;
+        private int _speed;
+        private uint _playedTime;
+        private int _lastSeen;
+        private int _regionId;
+        private ushort _zoneId;
+        private int _worldX;
+        private int _worldY;
+        private int _worldZ;
+        private int _worldO;
+        private ushort _rallyPoint;
+        private uint _skills;
+        private byte _bagBuy;
+        private byte _bankBuy;
+        private bool _online;
+        private byte _gearShow;
+        private ushort _titleId;
 
-        public Character_value()
-            : base()
+        private string _masterySkills;
+        private string _renownSkills;
+
+        private byte _gatheringSkill;
+        private byte _gatheringSkillLevel;
+        private byte _craftingSkill;
+        private byte _craftingSkillLevel;
+
+        private byte _craftingBags;
+
+        private uint _rvrkills;
+        private uint _rvrdeaths;
+
+        private string _lockouts ="";
+        private int _disconecttime;
+
+        [PrimaryKey]
+        public uint CharacterId
         {
-
-        }
-
-        [DataElement(Unique = true)]
-        public UInt32 CharacterId
-        {
-            get { return _CharacterId; }
-            set { _CharacterId = value; Dirty = true; }
+            get { return _characterId; }
+            set { _characterId = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull=false)]
         public byte Level
         {
-            get { return _Level; }
-            set { _Level = value; Dirty = true; }
+            get { return _level; }
+            set { _level = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public uint Xp
         {
-            get { return _Xp; }
-            set { _Xp = value; Dirty = true; }
+            get { return _xp; }
+            set { _xp = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public int XpMode
         {
-            get { return _XpMode; }
-            set { _XpMode = value; Dirty = true; }
+            get { return _xpMode; }
+            set { _xpMode = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
-        public int RestXp
+        public uint RestXp
         {
-            get { return _RestXp; }
-            set { _RestXp = value; Dirty = true; }
+            get { return _restXp; }
+            set { _restXp = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public uint Renown
         {
-            get { return _Renown; }
-            set { _Renown = value; Dirty = true; }
+            get { return _renown; }
+            set { _renown = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public byte RenownRank
         {
-            get { return _RenownRank; }
-            set { _RenownRank = value; Dirty = true; }
+            get { return _renownRank; }
+            set { _renownRank = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public uint Money
         {
-            get { return _Money; }
-            set { _Money = value; Dirty = true; }
+            get { return _money; }
+            set { _money = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public int Speed
         {
-            get { return _Speed; }
-            set { _Speed = value; Dirty = true; }
+            get { return _speed; }
+            set { _speed = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public uint PlayedTime
+        {
+            get { return _playedTime; }
+            set { _playedTime = value; Dirty = true; }
+        }
+
+        [DataElement]
+        public int LastSeen
+        {
+            get { return _lastSeen; }
+            set { _lastSeen = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public int RegionId
         {
-            get { return _RegionId; }
-            set { _RegionId = value; Dirty = true; }
+            get { return _regionId; }
+            set { _regionId = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
-        public UInt16 ZoneId
+        public ushort ZoneId
         {
-            get { return _ZoneId; }
-            set { _ZoneId = value; Dirty = true; }
+            get { return _zoneId; }
+            set { _zoneId = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public int WorldX
         {
-            get { return _WorldX; }
-            set { _WorldX = value; Dirty = true; }
+            get { return _worldX; }
+            set { _worldX = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public int WorldY
         {
-            get { return _WorldY; }
-            set { _WorldY = value; Dirty = true; }
+            get { return _worldY; }
+            set { _worldY = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public int WorldZ
         {
-            get { return _WorldZ; }
-            set { _WorldZ = value; Dirty = true; }
+            get { return _worldZ; }
+            set { _worldZ = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public int WorldO
         {
-            get { return _WorldO; }
-            set { _WorldO = value; Dirty = true; }
+            get { return _worldO; }
+            set { _worldO = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public ushort RallyPoint
         {
-            get { return _RallyPoint; }
-            set { _RallyPoint = value; Dirty = true; }
+            get { return _rallyPoint; }
+            set { _rallyPoint = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public byte BagBuy
         {
-            get { return _BagBuy; }
-            set { _BagBuy = value; Dirty = true; }
+            get { return _bagBuy; }
+            set { _bagBuy = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public byte BankBuy
+        {
+            get { return _bankBuy; }
+            set { _bankBuy = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public uint Skills
         {
-            get { return _Skills; }
-            set { _Skills = value; Dirty = true; }
+            get { return _skills; }
+            set { _skills = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public bool Online
         {
-            get { return _Online; }
-            set { _Online = value; Dirty = true; }
+            get { return _online; }
+            set { _online = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public byte GearShow
+        {
+            get { return _gearShow; }
+            set { _gearShow = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public ushort TitleId
+        {
+            get { return _titleId; }
+            set { _titleId = value; Dirty = true; }
+        }
+        
+        [DataElement(AllowDbNull = false)]
+        public string RenownSkills
+        {
+            get { return _renownSkills; }
+            set { _renownSkills = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public string MasterySkills
+        {
+            get { return _masterySkills; }
+            set { _masterySkills = value; Dirty = true; }
+        }
+
+        [DataElement] public ushort Morale1 { get; set; }
+        [DataElement] public ushort Morale2 { get; set; }
+        [DataElement] public ushort Morale3 { get; set; }
+        [DataElement] public ushort Morale4 { get; set; }
+
+        public ushort GetMorale(byte index)
+        {
+            switch (index)
+            {
+                case 1:
+                    return Morale1;
+                case 2:
+                    return Morale2;
+                case 3:
+                    return Morale3;
+                case 4:
+                    return Morale4;
+            }
+
+            return 0;
+        }
+
+        public void SetMorale(byte index, ushort value)
+        {
+            switch (index)
+            {
+                case 1:
+                    Morale1 = value;
+                    Dirty = true;
+                    break;
+                case 2:
+                    Morale2 = value;
+                    Dirty = true;
+                    break;
+                case 3:
+                    Morale3 = value;
+                    Dirty = true;
+                    break;
+                case 4:
+                    Morale4 = value;
+                    Dirty = true;
+                    break;
+            }
+        }
+
+        [DataElement]
+        public ushort Tactic1 { get; set; }
+        [DataElement]
+        public ushort Tactic2 { get; set; }
+        [DataElement]
+        public ushort Tactic3 { get; set; }
+        [DataElement]
+        public ushort Tactic4 { get; set; }
+
+        public List<ushort> GetTactics()
+        {
+            List<ushort> tacList = new List<ushort> { Tactic1 };
+
+            if (Tactic2 != 0)
+                tacList.Add(Tactic2);
+            if (Tactic3 != 0)
+                tacList.Add(Tactic3);
+            if (Tactic4 != 0)
+                tacList.Add(Tactic4);
+
+            return tacList;
+        } 
+
+        public void SetTactic(byte index, ushort value)
+        {
+            switch (index)
+            {
+                case 1:
+                    Tactic1 = value;
+                    Dirty = true;
+                    break;
+                case 2:
+                    Tactic2 = value;
+                    Dirty = true;
+                    break;
+                case 3:
+                    Tactic3 = value;
+                    Dirty = true;
+                    break;
+                case 4:
+                    Tactic4 = value;
+                    Dirty = true;
+                    break;
+            }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public byte GatheringSkill
+        {
+            get { return _gatheringSkill; }
+            set { _gatheringSkill = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public byte GatheringSkillLevel
+        {
+            get { return _gatheringSkillLevel; }
+            set { _gatheringSkillLevel = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public byte CraftingSkill
+        {
+            get { return _craftingSkill; }
+            set { _craftingSkill = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public byte CraftingSkillLevel
+        {
+            get { return _craftingSkillLevel; }
+            set { _craftingSkillLevel = value; Dirty = true; }
+        }
+
+        private bool _experimentalMode;
+
+        [DataElement(AllowDbNull = false)]
+        public bool ExperimentalMode
+        {
+            get { return _experimentalMode; }
+            set { _experimentalMode = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public uint RVRKills
+        {
+            get { return _rvrkills; }
+            set { _rvrkills = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public uint RVRDeaths
+        {
+            get { return _rvrdeaths; }
+            set { _rvrdeaths = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public byte CraftingBags
+        {
+            get { return _craftingBags; }
+            set { _craftingBags = value; Dirty = true; }
+        }
+
+        private uint _pendingXp;
+
+        [DataElement()]
+        public uint PendingXp
+        {
+            get { return _pendingXp; }
+            set { _pendingXp = value; Dirty = true; }
+        }
+
+        private uint _pendingRenown;
+
+        [DataElement()]
+        public uint PendingRenown
+        {
+            get { return _pendingRenown; }
+            set { _pendingRenown = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public string Lockouts
+        {
+            get { return _lockouts; }
+            set { _lockouts = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public int DisconcetTime
+        {
+            get { return _disconecttime; }
+            set { _disconecttime = value; Dirty = true; }
+        }
+
+        public List<String> GetAllLockouts()
+        {
+            List<String> lockouts = new List<string>();
+
+            if (_lockouts == null ||_lockouts.Length == 0)
+                return lockouts;
+
+
+            for (int i = 0; i < _lockouts.Split(';').Length; i++)
+                lockouts.Add(_lockouts.Split(';')[i]);
+            return lockouts;
+        }
+
+        public String GetLockout(ushort zone)
+        {
+            if (_lockouts == null)
+                return null;
+            for (int i = 0; i < _lockouts.Split(';').Length; i++)
+                if(_lockouts.Split(';')[i].Split(':')[0] == ""+zone)
+            return _lockouts.Split(';')[i];
+
+            return null;
+        }
+
+        public void RemoveLockout(String Lockout)
+        {
+            String logoutnew ="";
+            for (int i = 0; i < _lockouts.Split(';').Length; i++)
+            {
+                if (_lockouts.Split(';')[i].Split(':')[0] == Lockout.Split(':')[0])
+                    continue;
+                else
+                {
+                    if (i > 0)
+                        logoutnew += ";";
+                    logoutnew += _lockouts.Split(';')[i];
+                }
+            }
+            Lockouts = logoutnew;
+        }
+        public void AddLogout(String Lockout)
+        {
+            String logoutnew = "";
+            for (int i = 0; i < _lockouts.Split(';').Length; i++)
+            {
+                if (_lockouts.Split(';')[i].Split(':')[0] == Lockout.Split(':')[0])
+                {
+                    if (i > 0)
+                        logoutnew += ";";
+                        logoutnew += Lockout;
+                }
+                else
+                {
+                    if (i > 0)
+                        logoutnew += ";";
+                    logoutnew += Lockout;
+                }
+            }
+            Lockouts = logoutnew;
+
+            
         }
     }
 }

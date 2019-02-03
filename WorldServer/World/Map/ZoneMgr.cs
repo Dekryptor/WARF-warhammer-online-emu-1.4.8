@@ -1,22 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
+﻿
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -25,84 +7,86 @@ using System.Threading;
 
 using Common;
 using FrameWork;
+using WorldServer.World.Objects.PublicQuests;
+using WorldServer.Services.World;
 
 namespace WorldServer
 {
     public class ZoneMgr
     {
-        public UInt16 ZoneId;
+        public ushort ZoneId;
         public Zone_Info Info;
         public ClientZoneInfo ClientInfo;
         public RegionMgr Region;
+        public static int LOW_FIGHT = 200;
+        public static int MEDIUM_FIGHT = 1500;
+        public static int LARGE_FIGHT = 2500;
         public bool Running;
 
-        public ZoneMgr(RegionMgr Region,Zone_Info Info)
+        // List of pqs in the zone
+        public List<PublicQuest> PQuests = new List<PublicQuest>();
+
+        private int[,] _heatmap = new int[64,64];
+        // list of hot spots in the zone
+        public List<HotSpot> HotSpots = new List<HotSpot>();
+
+        public List<Player> Players = new List<Player>();
+
+        public ZoneMgr(RegionMgr Region, Zone_Info Info)
         {
             this.Region = Region;
-            this.ZoneId = Info.ZoneId;
+            ZoneId = Info.ZoneId;
             this.Info = Info;
-            this.Running = true;
-            this.ClientInfo = ClientFileMgr.GetZoneInfo(Info.ZoneId);
+            Running = true;
+            ClientInfo = ClientFileMgr.GetZoneInfo(Info.ZoneId);
         }
         public void Stop()
         {
-            Log.Success("ZoneMgr", "[" + ZoneId + "] Stop");
+            Log.Debug("ZoneMgr", "[" + ZoneId + "] Stop");
         }
 
         #region Objects
 
-        static public UInt16 MAX_OBJECTS = 65000;
-
-        public List<Object> _Objects = new List<Object>();
-        public List<Player> _Players = new List<Player>();
-
-        public Object GetObject(ushort Id)
+        public void AddObject(Object obj)
         {
-            lock (_Objects)
-                return _Objects.Find(obj => obj != null && obj.Oid == Id);
-        }
-        public int GetPlayers()
-        {
-            return _Players.Count();
-        }
-        public void AddObject(Object Obj)
-        {
-            if (Obj.Zone == this)
+            if (obj.Zone == this)
             {
                 Log.Error("ZoneMgr", "Object Already in zone : " + ZoneId);
                 return;
             }
 
-            if (Obj.Zone != null && Obj.Zone != this)
-                Obj.Zone.RemoveObject(Obj);
+            obj.SetZone(this);
 
-            Obj.Zone = this;
+            if (obj is PublicQuest)
+                PQuests.Add((PublicQuest)obj);
 
+            if (obj is HotSpot)
+                HotSpots.Add((HotSpot)obj);
 
-            lock (_Objects)
-            {
-                _Objects.Add(Obj);
+            if (obj is Player)
+                lock (Players)
+                    Players.Add((Player)obj);
 
-                if (Obj.IsPlayer())
-                    _Players.Add(Obj.GetPlayer());
-            }
-
-            Obj.LastRangeCheck = new Point2D();
+            obj.LastRangeCheck = new Point2D();
         }
-        public void RemoveObject(Object Obj)
+        public void RemoveObject(Object obj)
         {
-            if (Obj._ZoneMgr == this)
+            if (obj.Zone == this)
             {
-                lock (_Objects)
-                {
-                    _Objects.Remove(Obj);
-                    if (Obj.IsPlayer())
-                        _Players.Remove(Obj.GetPlayer());
-                }
-
-                Obj._ZoneMgr = null;
+                obj.ClearZone();
             }
+
+            if (obj is Player)
+                lock (Players)
+                    Players.Remove((Player)obj);
+
+            if (obj is PublicQuest)
+                PQuests.Remove((PublicQuest)obj);
+
+            if (obj is HotSpot)
+                HotSpots.Remove((HotSpot)obj);
         }
+        /*
         public bool Run(long Tick)
         {
             if (!Running)
@@ -112,99 +96,99 @@ namespace WorldServer
             lock (_Objects)
             {
                 UpdateAnnounces(Tick);
-                Object Obj;
-                for (; i < _Objects.Count; ++i)
-                {
-                    Obj = _Objects[i];
-                    if (Obj != null && Obj.Zone == this)
-                    {
-                        try
-                        {
-                            if (!Obj.IsLoad())
-                            {
-                                Obj.Load();
-                            }
-                            else
-                            {
-                                if (Obj.IsDisposed)
-                                    Region.RemoveObject(Obj);
-                                else
-                                    Obj.Update(Tick);
-                            }
-                        }
-                        catch (Exception e)
-                        {
-                            Log.Error("Zone", e.ToString());
 
-                            if(!Obj.IsPlayer())
-                                RemoveObject(Obj);
-                        }
-                    }
-                }
             }
 
             return true;
+        }*/
+
+        #endregion
+
+        #region HotSpots
+        public void AddHotspotDamage(int zoneX, int zoneY)
+        {
+            int x = (int)Point2D.Clamp(zoneX / 1024, 0, 63);
+            int y = (int)Point2D.Clamp(zoneY / 1024, 0, 63);
+            if(_heatmap[x, y] <= LARGE_FIGHT+1000)
+                _heatmap[x,y]++;
+        }
+        public List<Tuple<Point3D, int>> GetHotSpots()
+        {
+            List<Tuple<Point3D, int>> HotSpots = new List<Tuple<Point3D, int>>();
+
+            for (int x = 0; x < 64; x++)
+                for (int y = 0; y < 64; y++)
+                {
+                    if (_heatmap[x, y] >= LOW_FIGHT )
+                    {
+                        HotSpots.Add(new Tuple<Point3D, int>(new Point3D(x * 1024 + 512, y*1024 + 512,0), (int)(_heatmap[x, y])));
+                    }
+                }
+            return HotSpots;
+        }
+
+        public void DecayHotspots(int amount = 25)
+        {
+
+            for (int x = 0; x < 64; x++)
+                for (int y = 0; y < 64; y++)
+                {
+                    if (_heatmap[x, y] > 0)
+                    {
+                      
+                        if(_heatmap[x, y] > MEDIUM_FIGHT)
+                            _heatmap[x, y] -= amount * 3;
+                        else
+                            _heatmap[x, y] -= amount;
+
+                        if (_heatmap[x, y] < 0)
+                            _heatmap[x, y] = 0;
+                    }
+                }
+        }
+
+        public void SendHotSpots(Player Plr)
+        {
+            List<Tuple<Point3D, int>> HotSpots = GetHotSpots();
+            PacketOut Out = new PacketOut((byte)Opcodes.F_UPDATE_HOT_SPOT);
+            Out.WriteByte((byte)HotSpots.Count);
+            Out.WriteByte(3); // 3 - multipul hotspots
+            Out.WriteUInt16(ZoneId);
+
+            for (int i = 0; i < HotSpots.Count; i++)
+            {
+                Out.WriteByte((byte)i);
+                Out.WriteUInt16((ushort)HotSpots[i].Item1.X);
+                Out.WriteUInt16((ushort)HotSpots[i].Item1.Y);
+
+                if (HotSpots[i].Item2 >= LARGE_FIGHT)
+                    Out.WriteByte(0); // 24 or more
+                else if (HotSpots[i].Item2 >= MEDIUM_FIGHT)
+                    Out.WriteByte(2); // 16 or more
+                else
+                    Out.WriteByte(1); // 8 or more
+            }
+
+            if (Plr == null)
+                lock(Players)
+                    foreach (Player pPlr in Players)
+                    {
+                        if (pPlr == null || pPlr.IsDisposed || !pPlr.IsInWorld())
+                            continue;
+
+                        pPlr.SendPacket(Out);
+                    }
+            else
+                Plr.SendPacket(Out);
         }
 
         #endregion
 
         #region Range
 
-        public List<Player> GetRangedPlayer(Object Obj, int Range)
+        public ushort CalculPin(uint WorldPos, bool x)
         {
-            Log.Info("ZoneMgr", "GetRangedPlayer zoneid = " + ZoneId + ",ObjSize=" + _Objects.Count);
-            lock (_Objects)
-            {
-                return _Players.FindAll(Ranged => Ranged != null &&
-                    RegionMgr.IsRange(Ranged.XOffset, Obj.XOffset, Range) && RegionMgr.IsRange(Ranged.YOffset, Obj.YOffset, Range));
-                    
-            }
-        }
-        public List<Object> GetRangedObject(Object Obj, int Range)
-        {
-            Log.Info("ZoneMgr", "GetRangedObject zoneid = " + ZoneId +",ObjSize="+_Objects.Count);
-            lock (_Objects)
-            {
-                return _Objects.FindAll(Ranged => Ranged != null &&
-                    RegionMgr.IsRange(Ranged.XOffset, Obj.XOffset, Range) && RegionMgr.IsRange(Ranged.YOffset, Obj.YOffset, Range));
-
-            }
-        }
-
-        public UInt16 CalculPin(uint WorldPos,bool x)
-        {
-            return CalculPin(Info, (int)WorldPos, x);
-        }
-
-        public UInt16 CalculPin(UInt16 Pos, UInt16 Offset, bool x)
-        {
-            int BaseOffset = x ? Info.OffX : Info.OffY;
-
-            if (Offset >= BaseOffset + 8) // Si on est sur la partie supérieur /2+32768
-                Pos += 32768;
-
-            return Pos;
-        }
-        public UInt16 CalculCombat(UInt16 Pos, UInt16 OffSet, bool x)
-        {
-            Pos /= 2;
-            UInt16 Base = (UInt16)(x == true ? Info.OffX : Info.OffY);
-
-            if (Base > OffSet) return Pos;
-
-            // 0>32768 Tous les 4 Offset
-            OffSet -= Base;
-            // 212-=200 = 12
-            while (OffSet >= 4)
-            {
-                // 8 = 16384
-                // 4 = 32768
-                // 0 = 49152
-                OffSet-=4;
-                Pos += 16384;
-            }
-
-            return Pos;
+            return ZoneService.CalculPin(Info, (int)WorldPos, x);
         }
 
         #endregion
@@ -215,7 +199,7 @@ namespace WorldServer
         public long NextAnnounce = 0;
 
         public void UpdateAnnounces(long Tick)
-        {
+        {/*
             if (NextAnnounce <= Tick)
             {
                 TimedAnnounce Announce = WorldMgr.GetNextAnnounce(ref CurrentAnnounce, ZoneId);
@@ -236,74 +220,12 @@ namespace WorldServer
 
                     NextAnnounce = Tick + Announce.NextTime;
                 }
-            }
+            }*/
         }
 
         #endregion
 
         #region Statics
-
-        static public UInt16 CalculPin(Zone_Info Info, int WorldPos, bool x)
-        {
-            UInt16 Pin = 0;
-
-            int BaseOffset = x ? Info.OffX << 12 : Info.OffY << 12;
-            if (BaseOffset <= WorldPos)
-                Pin = (UInt16)(WorldPos - BaseOffset);
-
-            return Pin;
-        }
-
-        static public Point3D CalculWorldPosition(UInt16 ZoneID, UInt32 XZone, UInt32 YZone, int X, int Y, int Z)
-        {
-            int x = X > 32768 ? X - 32768 : X;
-            int y = Y > 32768 ? Y - 32768 : Y;
-            Point3D WorldPosition = new Point3D(0, 0, 0);
-
-
-            WorldPosition.X = (int)((int)XZone + ((int)((int)x) & 0x00000FFF));
-            WorldPosition.Y = (int)((int)YZone + ((int)((int)y) & 0x00000FFF));
-            WorldPosition.Z = Z;
-
-            return WorldPosition;
-        }
-
-        static public void CalculWorldPosition(UInt16 ZoneID, ushort PinX, ushort PinY, ushort PinZ, ref int WorldX, ref int WorldY, ref int WorldZ)
-        {
-            Zone_Info Info = WorldMgr.GetZone_Info(ZoneID);
-            if (Info == null)
-                return;
-
-            int x = PinX > 32768 ? PinX - 32768 : PinX;
-            int y = PinY > 32768 ? PinY - 32768 : PinY;
-
-            WorldX = (int)((int)CalcOffset(Info, PinX, true) + ((int)((int)x) & 0x00000FFF));
-            WorldY = (int)((int)CalcOffset(Info, PinY, false) + ((int)((int)y) & 0x00000FFF));
-            WorldZ = PinZ;
-            if (Info.ZoneId == 161)
-                WorldZ += 16384;
-        }
-
-        static public Point3D CalculWorldPosition(Zone_Info Info, UInt16 PinX, UInt16 PinY, UInt16 PinZ)
-        {
-            int x = PinX > 32768 ? PinX - 32768 : PinX;
-            int y = PinY > 32768 ? PinY - 32768 : PinY;
-            Point3D WorldPosition = new Point3D(0, 0, 0);
-
-
-            WorldPosition.X = (int)((int)CalcOffset(Info,PinX,true) + ((int)((int)x) & 0x00000FFF));
-            WorldPosition.Y = (int)((int)CalcOffset(Info, PinY, false) + ((int)((int)y) & 0x00000FFF));
-            WorldPosition.Z = PinZ;
-            if (Info.ZoneId == 161)
-                WorldPosition.Z += 16384;
-
-            return WorldPosition;
-        }
-
-        static public uint CalcOffset(Zone_Info Info, UInt16 Pin, bool x)
-        {
-            return (UInt32)Math.Truncate((decimal)(Pin / 4096 + (x ? Info.OffX : Info.OffY))) << 12;
-        }
 
         #endregion
     }

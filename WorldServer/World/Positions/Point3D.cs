@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -89,17 +70,24 @@ namespace WorldServer
 
         #endregion
 
+        public void SetCoordsFrom(Point3D point)
+        {
+            X = point.X;
+            Y = point.Y;
+            Z = point.Z;
+        }
+
         /// <summary>
         /// Creates the string representation of this point
         /// </summary>
         /// <returns></returns>
         public override string ToString()
         {
-            return string.Format("({0}, {1}, {2})", m_x.ToString(), m_y.ToString(), m_z.ToString());
+            return string.Format("({0}, {1}, {2})", m_x, m_y, m_z);
         }
 
         /// <summary>
-        /// Get the distance to a point
+        /// Get the distance to a point, in feet.
         /// </summary>
         /// <remarks>
         /// If you don't actually need the distance value, it is faster
@@ -109,11 +97,15 @@ namespace WorldServer
         /// <returns>Distance to point</returns>
         public virtual int GetDistanceTo(IPoint3D point)
         {
-            double dx = (double)(X - point.X);
-            double dy = (double)(Y - point.Y);
-            double Range = Math.Sqrt(dx * dx + dy * dy);
-            Range = Range / Lerp(36.0, 13.50, Clamp(Range, 900));
-            return (int)(Range);
+            if (point == null)
+                return 900;
+
+            double dx = X - point.X;
+            double dy = Y - point.Y;
+            double dz = Z - point.Z;
+            double range = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            range = range / UNITS_TO_FEET;
+            return (int)(range);
         }
 
         /// <summary>
@@ -125,28 +117,14 @@ namespace WorldServer
         /// </remarks>
         /// <param name="point">Target point</param>
         /// <returns>Distance to point</returns>
-        public virtual int GetDistanceTo(float x,float y,float z)
+        public virtual int GetDistanceTo(float x, float y, float z)
         {
-            double dx = (double)(X - x);
-            double dy = (double)(Y - y);
-            double Range = Math.Sqrt(dx * dx + dy * dy);
-            Range = Range / Lerp(36.0, 13.50, Clamp(Range, 900));
-            return (int)(Range);
-        }
-
-        /// <summary>
-        /// Get the distance to a point (with z-axis adjustment)
-        /// </summary>
-        /// <param name="point">Target point</param>
-        /// <param name="zfactor">Z-axis factor - use values between 0 and 1 to decrease influence of Z-axis</param>
-        /// <returns>Adjusted distance to point</returns>
-        public virtual int GetDistanceTo(IPoint3D point, double zfactor)
-        {
-            double dx = (double)X - point.X;
-            double dy = (double)Y - point.Y;
-            double dz = (double)((Z/2 - point.Z/2) * zfactor);
-
-            return (int)(Math.Sqrt(dx * dx + dy * dy + dz * dz) / 13.2f);
+            double dx = X - x;
+            double dy = Y - y;
+            double dz = Z - z;
+            double range = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            range = range / UNITS_TO_FEET;
+            return (int)range;
         }
 
         /// <summary>
@@ -155,29 +133,32 @@ namespace WorldServer
         /// <param name="point">Target point</param>
         /// <param name="radius">Radius</param>
         /// <returns>True if the point is within the radius, otherwise false</returns>
-        public bool IsWithinRadius(IPoint3D point, int radius)
+        public virtual bool IsWithinRadiusUnits(IPoint3D point, int radius)
         {
-            return IsWithinRadius(point, radius, false);
+            if (radius > ushort.MaxValue)
+                return GetDistance(point) <= radius;
+
+            double dx = X - point.X;
+            double dy = Y - point.Y;
+            double dz = Z - point.Z;
+            double distSquare = dx * dx + dy * dy + dz * dz;
+
+            return distSquare <= radius * radius;
         }
 
-
-        /// <summary>
-        /// Determine if another point is within a given radius, optionally ignoring Z values
-        /// </summary>
-        /// <param name="point">Target point</param>
-        /// <param name="radius">Radius</param>
-        /// <param name="ignoreZ">ignore Z</param>
-        /// <returns>True if the point is within the radius, otherwise false</returns>
-        public bool IsWithinRadius(IPoint3D point, int radius, bool ignoreZ)
+        public virtual bool IsWithinRadiusFeet(IPoint3D point, int radius)
         {
-            int Dist = 0;
-            
-            if(!ignoreZ)
-                Dist = GetDistanceTo(point);
-            else
-                Dist = GetDistance(point);
+            radius *= UNITS_TO_FEET;
 
-            return Dist < radius;
+            if (radius > ushort.MaxValue)
+                return GetDistance(point) <= radius;
+
+            double dx = X - point.X;
+            double dy = Y - point.Y;
+            double dz = Z - point.Z;
+            double distSquare = dx * dx + dy * dy + dz * dz;
+
+            return distSquare <= radius * radius;
         }
     }
 }

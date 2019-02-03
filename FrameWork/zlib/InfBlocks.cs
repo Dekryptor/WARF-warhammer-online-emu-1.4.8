@@ -99,10 +99,10 @@ namespace FrameWork
 		internal int end; // one byte after sliding window 
 		internal int read; // window read pointer 
 		internal int write; // window write pointer 
-		internal System.Object checkfn; // check function 
+		internal object checkfn; // check function 
 		internal long check; // check on output 
 		
-		internal InfBlocks(ZStream z, System.Object checkfn, int w)
+		internal InfBlocks(ZStream z, object checkfn, int w)
 		{
 			hufts = new int[MANY * 3];
 			window = new byte[w];
@@ -148,7 +148,7 @@ namespace FrameWork
 				p = z.next_in_index; n = z.avail_in; b = bitb; k = bitk;
 			}
 			{
-				q = write; m = (int) (q < read?read - q - 1:end - q);
+				q = write; m = q < read?read - q - 1:end - q;
 			}
 			
 			// process input based on current state
@@ -178,7 +178,7 @@ namespace FrameWork
 							b |= (z.next_in[p++] & 0xff) << k;
 							k += 8;
 						}
-						t = (int) (b & 7);
+						t = b & 7;
 						last = t & 1;
 						
 						switch (SupportClass.URShift(t, 1))
@@ -290,16 +290,16 @@ namespace FrameWork
 						{
 							if (q == end && read != 0)
 							{
-								q = 0; m = (int) (q < read?read - q - 1:end - q);
+								q = 0; m = q < read?read - q - 1:end - q;
 							}
 							if (m == 0)
 							{
 								write = q;
 								r = inflate_flush(z, r);
-								q = write; m = (int) (q < read?read - q - 1:end - q);
+								q = write; m = q < read?read - q - 1:end - q;
 								if (q == end && read != 0)
 								{
-									q = 0; m = (int) (q < read?read - q - 1:end - q);
+									q = 0; m = q < read?read - q - 1:end - q;
 								}
 								if (m == 0)
 								{
@@ -576,7 +576,7 @@ namespace FrameWork
 						codes.free(z);
 						
 						p = z.next_in_index; n = z.avail_in; b = bitb; k = bitk;
-						q = write; m = (int) (q < read?read - q - 1:end - q);
+						q = write; m = q < read?read - q - 1:end - q;
 						
 						if (last == 0)
 						{
@@ -589,7 +589,7 @@ namespace FrameWork
 					case DRY: 
 						write = q;
 						r = inflate_flush(z, r);
-						q = write; m = (int) (q < read?read - q - 1:end - q);
+						q = write; m = q < read?read - q - 1:end - q;
 						if (read != write)
 						{
 							bitb = b; bitk = k;
@@ -662,7 +662,7 @@ namespace FrameWork
 			q = read;
 			
 			// compute number of bytes to copy as far as end of window
-			n = (int) ((q <= write?write:end) - q);
+			n = (q <= write?write:end) - q;
 			if (n > z.avail_out)
 				n = z.avail_out;
 			if (n != 0 && r == Z_BUF_ERROR)

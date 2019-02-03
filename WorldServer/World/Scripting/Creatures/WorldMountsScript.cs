@@ -27,6 +27,7 @@ using FrameWork;
 
 namespace WorldServer
 {
+    /*
     [GeneralScript(false, "", CreatureEntry = 116, GameObjectEntry = 0)]
     public class WorldOrderMountScript : AGeneralScript
     {
@@ -42,7 +43,7 @@ namespace WorldServer
 
             if(Target._Info.Race == (byte)GameData.Races.RACES_DWARF)
                 Target.MvtInterface.CurrentMount.SetMount(8);
-            else if (RandomMgr.Next(4) == 1)
+            else if (StaticRandom.Instance.Next(4) == 1)
                 Target.MvtInterface.CurrentMount.SetMount(180);
             else
                 Target.MvtInterface.CurrentMount.SetMount(1);
@@ -62,13 +63,13 @@ namespace WorldServer
             if (Target.MvtInterface.IsMount())
                 return;
 
-            if (RandomMgr.Next(4) == 1)
+            if (StaticRandom.Instance.Next(4) == 1)
                 Target.MvtInterface.CurrentMount.SetMount(3);
             else
                 Target.MvtInterface.CurrentMount.SetMount(12);
         }
     }
-
+    */
     /*[GeneralScript(true, "WorldFleeAbility")]
     public class WorldFleeAbilityMount : AGeneralScript
     {

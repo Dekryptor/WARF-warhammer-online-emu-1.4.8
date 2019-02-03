@@ -52,7 +52,7 @@ namespace FrameWork
 		public ZStreamException():base()
 		{
 		}
-		public ZStreamException(System.String s):base(s)
+		public ZStreamException(string s):base(s)
 		{
 		}
 	}

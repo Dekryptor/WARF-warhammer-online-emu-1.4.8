@@ -11,7 +11,7 @@ namespace Common
 
         public FastRandom(long seed)
         {
-            this._seed = seed;
+            _seed = seed;
         }
 
         long randomLong()
@@ -44,12 +44,12 @@ namespace Common
 
         public double randomDouble()
         {
-            return randomLong() / ((double)long.MaxValue - 1d);
+            return randomLong() / (long.MaxValue - 1d);
         }
 
         public float randomFloat()
         {
-            return randomLong() / ((float)long.MaxValue - 1f);
+            return randomLong() / (long.MaxValue - 1f);
         }
 
         public float randomPosFloat()
@@ -62,7 +62,7 @@ namespace Common
             return randomLong() > 0;
         }
 
-        public String randomCharacterString(int length)
+        public string randomCharacterString(int length)
         {
             StringBuilder s = new StringBuilder();
 
@@ -78,7 +78,7 @@ namespace Common
         public double standNormalDistrDouble()
         {
 
-            double q = Double.MaxValue;
+            double q = double.MaxValue;
             double u1 = 0;
             double u2;
 
@@ -116,7 +116,7 @@ namespace Common
 
         public SFastRandom(long seed)
         {
-            this._seed = seed;
+            _seed = seed;
         }
 
         long randomLong()
@@ -149,12 +149,12 @@ namespace Common
 
         public double randomDouble()
         {
-            return randomLong() / ((double)long.MaxValue - 1d);
+            return randomLong() / (long.MaxValue - 1d);
         }
 
         public float randomFloat()
         {
-            return randomLong() / ((float)long.MaxValue - 1f);
+            return randomLong() / (long.MaxValue - 1f);
         }
 
         public float randomPosFloat()
@@ -167,7 +167,7 @@ namespace Common
             return randomLong() > 0;
         }
 
-        public String randomCharacterString(int length)
+        public string randomCharacterString(int length)
         {
             StringBuilder s = new StringBuilder();
 
@@ -183,7 +183,7 @@ namespace Common
         public double standNormalDistrDouble()
         {
 
-            double q = Double.MaxValue;
+            double q = double.MaxValue;
             double u1 = 0;
             double u2;
 

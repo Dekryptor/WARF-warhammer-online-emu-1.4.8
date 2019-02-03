@@ -1,92 +1,109 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿//#define NO_RESPOND
 
-using FrameWork;
+using System;
+using System.Collections.Generic;
+using SystemData;
 using Common;
+using FrameWork;
+using GameData;
+using WorldServer.World.Objects.PublicQuests;
+using WorldServer.World.Battlefronts.Keeps;
+using WorldServer.Services.World;
 
 namespace WorldServer
 {
     public class AIInterface : BaseInterface
     {
-        static public int BrainThinkTime = 3000; // Update think every 3sec
-        static public int MAX_AGGRO_RANGE = 30; // Max Range To Aggro
+        public static int BrainThinkTime = 3000; // Update think every 3sec
+        public static int MaxAggroRange = 15; // Max Range To Aggro
 
-        private AiState _State = AiState.STANDING;
+        private Unit _unit;
+        public Player Debugger { get; set; }
+
+        private AiState _state = AiState.STANDING;
         public AiState State
         {
             get
             {
-                return _State;
+                return _state;
             }
             set
             {
-                if (_State != value)
+                if (_state != value)
                 {
                     if (value == AiState.FIGHTING)
                         OnCombatStart();
-                    else if (value == AiState.STANDING && _State == AiState.FIGHTING)
+                    else if (value == AiState.STANDING && _state == AiState.FIGHTING)
                         OnCombatStop();
                     else if (value == AiState.MOVING)
                         OnWalkStart();
-                    else if(_State == AiState.MOVING)
+                    else if(_state == AiState.MOVING)
                         OnWalkEnd();
 
-                    _State = value;
+                    _state = value;
                 }
             }
         }
 
-        public CombatInterface Cbt;
-        public MovementInterface Mvt;
-        public EventInterface Evt;
-
-        public AIInterface()
-        {
-            RangedAllies = new List<Unit>();
-            RangedEnemies = new List<Unit>();
-        }
-
         public override bool Load()
         {
-            Evt = _Owner.EvtInterface;
-            if (_Owner.IsUnit())
+            _unit = (Unit)_Owner;
+
+            if (!(_Owner is Player))
             {
-                Cbt = _Owner.GetUnit().CbtInterface;
-                Mvt = _Owner.GetUnit().MvtInterface;
+                if (CurrentBrain == null)
+                    SetBrain(new DummyBrain(_unit));
             }
 
-            Evt.AddEvent(UpdateThink, BrainThinkTime + RandomMgr.Next(0, 2000), 0);
-            Evt.AddEventNotify(EventName.ON_TARGET_DIE, OnTargetDie);
+            _unit.EvtInterface.AddEventNotify(EventName.OnTargetDie, OnTargetDie);
+
+            ResetThinkInterval();
 
             return base.Load();
         }
 
-        public override void Stop()
-        {
-            Evt.RemoveEvent(UpdateThink);
+        private int _thinkInterval;
+        private long _nextThinkTime;
 
-            base.Stop();
-        }
-
-        public override void Update(long Tick)
+        private void ResetThinkInterval()
         {
-            if (_Owner.IsUnit())
+            if (_Owner is Pet || (_unit.Level == 55 && _unit is Creature))
             {
-                if (!_Owner.GetUnit().IsDead)
-                    UpdateWaypoints(Tick);
+                _thinkInterval = 1000;
             }
 
-            base.Update(Tick);
+            else
+                _thinkInterval = BrainThinkTime;
         }
 
-        public bool OnTargetDie(Object Obj, object Args)
+        public override void Update(long tick)
+        {
+            #if USE_WAYPOINTS
+            if (_Owner.IsUnit())
+            {
+                if (!_unit.IsDead)
+                    UpdateWaypoints(tick);
+            }
+            #endif
+
+            if (tick > _nextThinkTime)
+            {
+                UpdateThink();
+
+                _nextThinkTime = tick + _thinkInterval;
+            }
+
+            base.Update(tick);
+        }
+
+        public bool OnTargetDie(Object obj, object args)
         {
             if (State == AiState.FIGHTING)
             {
                 LockMovement(4000);
             }
+
+            CurrentBrain.NotifyTargetKilled((Unit)obj);
             return false;
         }
 
@@ -96,19 +113,23 @@ namespace WorldServer
 
         public void OnCombatStart()
         {
-            if (EquipedItem == null && _Owner.IsCreature())
+            /*
+            if (EquipedItem == null && _Owner is Creature)
             {
                 EquipedItem = _Owner.GetCreature().ItmInterface.RemoveCreatureItem(11);
             }
+            */
         }
 
         public void OnCombatStop()
         {
-            if (EquipedItem != null && _Owner.IsCreature())
+            /*
+            if (EquipedItem != null && _Owner is Creature)
             {
                 _Owner.GetCreature().ItmInterface.AddCreatureItem(EquipedItem);
                 EquipedItem = null;
             }
+            */
         }
 
         public void OnWalkStart()
@@ -127,56 +148,273 @@ namespace WorldServer
 
         public ABrain CurrentBrain;
 
-        public void SetBrain(ABrain NewBrain)
+        protected Dictionary<ushort, AggroInfo> Aggros;
+
+        public void SetBrain(ABrain newBrain)
         {
-            if (CurrentBrain != null)
-                CurrentBrain.Stop();
+            CurrentBrain?.Stop();
 
-            CurrentBrain = NewBrain;
+            CurrentBrain = newBrain;
 
-            if (CurrentBrain != null)
-                CurrentBrain.Start();
+            if (Aggros == null)
+                Aggros = new Dictionary<ushort, AggroInfo>();
+
+            CurrentBrain?.Start(Aggros);
         }
 
         public void UpdateThink()
         {
-            if (HasPlayer() || !_Owner.IsUnit())
+            if (HasPlayer())
                 return;
 
-            if (_Owner.GetUnit().IsDead || _Owner.GetUnit().IsDisposed)
-                return;
+            if (_unit != null)
+            {
+                if (_unit is KeepNpcCreature.KeepCreature)
+                {
+                    KeepNpcCreature.KeepCreature npc = _unit as KeepNpcCreature.KeepCreature;
+                    if (((npc.Z - npc.SpawnPoint.Z > 120 || npc.SpawnPoint.Z - npc.Z > 30)) || !npc.PointWithinRadiusFeet(npc.WorldSpawnPoint, 200))
+                    {
+                        ProcessCombatEnd();
+                        return;
+                    }
+                }
+            }
 
             if (CurrentBrain != null && CurrentBrain.IsStart && !CurrentBrain.IsStop)
+            {
                 CurrentBrain.Think();
+                if (State == AiState.FIGHTING)
+                    CurrentBrain.Fight();
+            }
+
+            Creature creature = _unit as Creature;
+
+            if (creature == null || creature is Pet)
+                return;
+
+            if (!creature.PointWithinRadiusFeet(creature.WorldSpawnPoint, 200))
+                ProcessCombatEnd();
+
         }
+
+ #region Combat Events
+
+        /// <summary> Attempts to initiate AI-controlled combat. </summary>
+        public void ProcessCombatStart(Unit target)
+        {
+            #if DEBUG && NO_RESPOND
+            if (!(_unit is Pet))
+                return;
+            #endif
+
+            if (_unit == null)
+                return;
+
+            if (target == null)
+            {
+                Log.Error("AIInterface for " + _unit, "ProcessCombatStart with NULL target");
+                return;
+            }
+
+            if (!CurrentBrain.StartCombat(target))
+                return;
+
+            if (!(_unit is KeepNpcCreature.KeepCreature))
+                _thinkInterval = 650;
+
+            bool processLink = State != AiState.FIGHTING && target is Player && _unit.Aggressive;
+
+            State = AiState.FIGHTING;
+            _unit.CbtInterface.RefreshCombatTimer();
+
+            // Social for PQuestCreatures
+            if (processLink && _Owner is PQuestCreature)
+            {
+                if (IsInDungeon())
+                {
+                    foreach (Object obj in _Owner.ObjectsInRange)
+                    {
+                        PQuestCreature crea = obj as PQuestCreature;
+                        if (crea != null && _Owner.ObjectWithinRadiusFeet(crea, 40) && crea.Aggressive)
+                        {
+                            ((Creature)obj).AiInterface.ProcessLink(target);
+                        }
+                    }
+                }
+                else
+                {
+                    uint playerCount = 0;
+                    foreach (Object obj in _Owner.ObjectsInRange)
+                    {
+                        if (obj is Player)
+                        {
+                            playerCount++;
+                        }
+                    }
+
+                    uint counter = 0;
+                    foreach (Object obj in _Owner.ObjectsInRange)
+                    {
+                        PQuestCreature crea = obj as PQuestCreature;
+                        if (crea != null && _Owner.ObjectWithinRadiusFeet(crea, 30) && crea.Aggressive)
+                        {
+                            counter++;
+                            if (playerCount < 6 && playerCount < counter)
+                                break;
+
+                            ((Creature)obj).AiInterface.ProcessLink(target);
+                        }
+                    }
+                }
+            }
+        }
+
+        public bool IsInDungeon()
+        {
+            bool dungeon = false;
+
+            switch (_Owner.ZoneId)
+            {
+                case 60:
+                    dungeon = true;
+                    break;
+            }
+
+            return dungeon;
+        }
+
+        public void ProcessLink(Unit target)
+        {
+            if (State == AiState.FIGHTING || !CurrentBrain.StartCombat(target))
+                return;
+
+            State = AiState.FIGHTING;
+            _unit.CbtInterface.RefreshCombatTimer();
+        }
+
+        /// <summary>
+        /// <para>Attempts to have this unit leave AI-controlled combat.</para>
+        /// <para>Called when no targets remain alive or in range to be attacked, when the NPC leashes or is ordered to disengage, and when the NPC dies.</para>
+        /// </summary>
+        public void ProcessCombatEnd()
+        {
+            if (State != AiState.FIGHTING)
+                return;
+            if (CurrentBrain.EndCombat())
+            {
+                ResetThinkInterval();
+                State = AiState.STANDING;
+            }
+        }
+
+        public void ProcessAttacked(Unit attacker)
+        {
+            switch (State)
+            {
+                case AiState.STANDING:
+                case AiState.MOVING:
+                    ProcessCombatStart(attacker);
+                    break;
+                default:
+                    return;
+            }
+
+            CurrentBrain?.AddHatred(attacker, attacker is Player, 1);
+        }
+
+        public void ProcessTakeDamage(Unit fighter, uint damage, float hatredMod, uint mitigation = 0)
+        {
+            switch (State)
+            {
+                case AiState.STANDING:
+                case AiState.MOVING:
+                    ProcessCombatStart(fighter);
+                    break;
+            }
+
+            uint hateCaused = (uint)((damage + mitigation) * hatredMod * fighter.StsInterface.GetStatPercentageModifier(Stats.HateCaused));
+
+            fighter.BuffInterface.CheckGuardHate(CurrentBrain, ref hateCaused);
+
+            CurrentBrain?.AddHatred(fighter, fighter.IsPlayer(), hateCaused);
+        }
+
+        public void ProcessInflictDamage(Unit victim)
+        {
+            switch (State)
+            {
+                case AiState.STANDING:
+                case AiState.MOVING:
+                    ProcessCombatStart(victim);
+                    break;
+            }
+        }
+
+        public void ProcessTaunt(Unit taunter, byte lvl)
+        {
+            if (_unit is Pet)
+                return;
+
+            _unit.CbtInterface.RefreshCombatTimer();
+            taunter.CbtInterface.RefreshCombatTimer();
+
+            switch (State)
+            {
+                case AiState.STANDING:
+                case AiState.MOVING:
+                    ProcessCombatStart(taunter);
+                    break;
+            }
+
+            CurrentBrain.OnTaunt(taunter, lvl);
+        }
+
+        public void OnOwnerDied()
+        {
+            if (_unit is Player)
+                return;
+
+            ProcessCombatEnd();
+        }
+
+        #endregion
 
         #endregion
 
         #region Ranged
 
-        public List<Unit> RangedAllies;
-        public List<Unit> RangedEnemies;
+        public List<Unit> RangedAllies = new List<Unit>();
+        public List<Unit> RangedEnemies = new List<Unit>();
 
-        public bool AddRange(Unit Obj)
+        public bool AddRange(Unit unit)
         {
             if (!HasUnit())
                 return false;
 
-            if (CombatInterface.IsEnemy(GetUnit(), Obj))
-                RangedEnemies.Add(Obj.GetUnit());
+            if (CombatInterface.IsEnemy(GetUnit(), unit))
+            {
+                if ((unit.Realm == Realms.REALMS_REALM_NEUTRAL && !unit.Aggressive) || (!unit.IsPlayer() && !unit.Aggressive) || (!GetUnit().IsPlayer() && !GetUnit().Aggressive) || (unit is Creature && ((Creature) unit).Entry == 47) /*|| (unit is Creature && !unit.IsPlayer() && !unit.IsGameObject() && IsNeutralFaction(unit as Creature))*/)
+                    return true;
+
+                lock (RangedEnemies)
+                    RangedEnemies.Add(unit.GetUnit());
+            }
             else
-                RangedAllies.Add(Obj.GetUnit());
+            {
+                lock(RangedAllies)
+                    RangedAllies.Add(unit.GetUnit());
+            }
 
             return true;
         }
 
-        public bool RemoveRange(Unit Obj)
+        public bool RemoveRange(Unit unit)
         {
             if (!HasUnit())
                 return false;
 
-            RangedAllies.Remove(Obj);
-            RangedEnemies.Remove(Obj);
+            RangedAllies.Remove(unit);
+            RangedEnemies.Remove(unit);
             return true;
         }
 
@@ -186,29 +424,90 @@ namespace WorldServer
             RangedEnemies.Clear();
         }
 
+        /*private bool IsNeutralFaction(Creature c)
+        {
+            if (c.Spawn.Faction == 0 || (((c.Spawn.Faction >> 8 & 0x1))) == 0) return true;
+            else return false;
+        }*/
+
         public Unit GetAttackableUnit()
         {
-            float MaxRange = AIInterface.MAX_AGGRO_RANGE;
-            Unit Target = null;
-            Unit Me = GetUnit();
-            float Dist;
-            foreach (Unit Enemy in RangedEnemies)
-            {
-                if (Enemy.Realm == GameData.Realms.REALMS_REALM_NEUTRAL)
-                    continue;
+            Unit unitOwner = GetUnit();
 
-                if (!CombatInterface.CanAttack(Me, Enemy))
-                    continue;
+            float maxRange = MaxAggroRange + unitOwner.Level / 1.5f;
+            Unit target = null;
 
-                Dist = _Owner.GetDistanceTo(Enemy);
-                if (Dist < MaxRange)
+            lock (RangedEnemies)
+                foreach (Unit enemy in RangedEnemies)
                 {
-                    MaxRange = Dist;
-                    Target = Enemy;
-                }
-            }
+                    Player player = enemy as Player;
 
-            return Target;
+                    if (player != null && player.StealthLevel > 0 && unitOwner.Level <= player.EffectiveLevel + 2)
+                        continue;
+
+                    if (!CombatInterface.CanAttack(unitOwner, enemy))
+                        continue;
+
+                    float dist = _Owner.GetDistanceToObject(enemy, true);
+
+                    if (dist > maxRange)
+                        continue;
+
+                    if (unitOwner != null)
+                    {
+                        if (unitOwner is KeepNpcCreature.KeepCreature)
+                        {
+                            KeepNpcCreature.KeepCreature npc = unitOwner as KeepNpcCreature.KeepCreature;
+                            //Keep NPCs have additional hardening. If their target goes outside the keep, instantly reset.
+                            if (enemy.Z - npc.SpawnPoint.Z > 120 || npc.SpawnPoint.Z - enemy.Z > 30 || !enemy.PointWithinRadiusFeet(npc.WorldSpawnPoint, 200) || !npc.PointWithinRadiusFeet(npc.WorldSpawnPoint, 200))
+                            {
+                                continue;
+                            }
+                            if (!enemy.LOSHit(npc))
+                            {
+                                continue;
+                            }
+                        }
+                        else if (unitOwner is Creature)
+                        {
+                            Creature creature = unitOwner as Creature;
+                            if (creature is Pet)
+                            {
+                                Pet pet = creature as Pet;
+                               
+                                if (pet == null || pet.Owner == null)
+                                    continue;
+                                //Only aggro if we have LOS to the owner.
+                                if (!enemy.LOSHit(pet.Owner))
+                                {
+                                    continue;
+                                }
+
+                            }
+                            else
+                            {
+                                //Standard NPC checks.
+                                if (!creature.PointWithinRadiusFeet(creature.WorldSpawnPoint, 200))
+                                {
+                                    continue;
+                                }
+                                if (!enemy.LOSHit(creature))
+                                {
+                                    continue;
+                                }
+                            }
+                        }
+                        else
+                        {
+
+                        }
+                    }
+
+                    maxRange = dist;
+                    target = enemy;
+                }
+
+            return target;
         }
 
         #endregion
@@ -218,38 +517,141 @@ namespace WorldServer
         public List<Waypoint> Waypoints = new List<Waypoint>();
         public Waypoint CurrentWaypoint;
         public byte CurrentWaypointType = Waypoint.Loop;
-        public bool IsWalkingBack = false; // False : Running on waypooints Start to End
+        public bool IsWalkingBack; // False : Running on waypooints Start to End
         public int CurrentWaypointID = -1;
-        public long NextAllowedMovementTime = 0;
-        public bool Started = false;
-        public bool Ended = false;
+        public long NextAllowedMovementTime;
+        public bool Started;
+        public bool Ended;
 
-        public void AddWaypoint(Waypoint Wp)
+        // Waypoints
+        private static readonly object WaypointsTableLock = new object();
+
+        public void AddWaypoint(Waypoint AddWp)
         {
-            if (Waypoints.Count == 0)
+            //System.Diagnostics.Trace.Assert(_Owner.Name != "Heinz Lutzen");
+            if (_Owner.IsCreature())
             {
-                Waypoint Base = new Waypoint();
-                Base.X = (ushort)_Owner.X;
-                Base.Y = (ushort)_Owner.Y;
-                Base.Z = (ushort)_Owner.Z;
-                Base.WaitAtEndMS = 2000;
-                Waypoints.Add(Base);
+                if (Waypoints.Count == 0)
+                {
+                    Waypoint StartWp = new Waypoint
+                    {
+                        CreatureSpawnGUID = _Owner.GetCreature().Spawn.Guid,
+                        GameObjectSpawnGUID = _Owner.Oid,
+                        X = (ushort) _Owner.X,
+                        Y = (ushort) _Owner.Y,
+                        Z = (ushort) _Owner.Z,
+                        Speed = AddWp.Speed,
+                        WaitAtEndMS = AddWp.WaitAtEndMS
+                    };
+
+                    lock (WaypointsTableLock)
+                    {
+                        StartWp.GUID = Convert.ToUInt32(WorldMgr.Database.GetNextAutoIncrement<Waypoint>());
+                        Waypoints.Add(StartWp);
+                        WaypointService.DatabaseAddWaypoint(StartWp);
+                    }
+                    // lock (WaypointsTableLock)
+                }
+                AddWp.CreatureSpawnGUID = _Owner.GetCreature().Spawn.Guid;
+                AddWp.GameObjectSpawnGUID = _Owner.Oid;
+                lock (WaypointsTableLock)
+                {
+                    AddWp.GUID = Convert.ToUInt32(WorldMgr.Database.GetNextAutoIncrement<Waypoint>());
+                    Waypoints.Add(AddWp);
+                    WaypointService.DatabaseAddWaypoint(AddWp);
+                }
+                // lock (WaypointsTableLock)
+                Waypoint PrevWp = Waypoints[Waypoints.Count - 1];
+                PrevWp.NextWaypointGUID = AddWp.GUID;
+                SaveWaypoint(PrevWp);
             }
-
-            Waypoints.Add(Wp);
         }
 
-        public void RemoveWaypoint(Waypoint Wp)
+        public void SaveWaypoint(Waypoint SaveWp)
         {
-            Waypoints.Remove(Wp);
+            WaypointService.DatabaseSaveWaypoint(SaveWp);
         }
 
-        public Waypoint GetWaypoint(int Id)
+        public void RemoveWaypoint(Waypoint RemoveWp)
         {
-            if (Id < 0 || Id >= Waypoints.Count)
-                return null;
+            switch (Waypoints.Count)
+            {
+                case 0:
+                case 1:
+                    break;
+                case 2:
+                    lock (WaypointsTableLock)
+                    {
+                        foreach (Waypoint Wp in Waypoints)
+                        {
+                            WaypointService.DatabaseDeleteWaypoint(Wp);
+                        }
+                        Waypoints.Clear();
+                    } //lock
+                    break;
+                default:
+                    lock (WaypointsTableLock)
+                    {
+                        int Index = -1;
+                        foreach (Waypoint Wp in Waypoints)
+                        {
+                            if (Wp.GUID == RemoveWp.GUID)
+                            {
+                                Index = Waypoints.IndexOf(Wp);
+                            }
+                        }
+                        if (Index != -1)
+                        {
+                            if (Index != 0)
+                            {
+                                if (Index == Waypoints.Count)
+                                {
+                                    Waypoints[Index - 1].NextWaypointGUID = 0;
+                                }
+                                else
+                                {
+                                    Waypoints[Index - 1].NextWaypointGUID = Waypoints[Index].NextWaypointGUID;
+                                }
 
-            return Waypoints[Id];
+                                WaypointService.DatabaseSaveWaypoint(Waypoints[Index - 1]);
+                                WaypointService.DatabaseDeleteWaypoint(Waypoints[Index]);
+                                Waypoints.RemoveAt(Index);
+                            }
+                        }
+                    }
+                    // lock (WaypointsTableLock)
+                    break;
+            } // switch
+        }
+
+        public void RemoveWaypoint(int WaypointGUID)
+        {
+            RemoveWaypoint(GetWaypoint(WaypointGUID));
+        }
+
+        public void RandomizeWaypoint(Waypoint RandomWp)
+        {
+            if (_Owner.GetCreature() != null)
+            {
+                RandomWp.X = (ushort)(_Owner.GetCreature().X + StaticRandom.Instance.Next(50) + StaticRandom.Instance.Next(100) + StaticRandom.Instance.Next(150));
+                RandomWp.Y = (ushort)(_Owner.GetCreature().Y + StaticRandom.Instance.Next(50) + StaticRandom.Instance.Next(100) + StaticRandom.Instance.Next(150));
+                RandomWp.Z = (ushort)_Owner.GetCreature().Z;
+                RandomWp.Speed = 10;
+                RandomWp.WaitAtEndMS = (uint)(5000 + StaticRandom.Instance.Next(10) * 1000);
+                SaveWaypoint(RandomWp);
+            }
+        }
+
+        public Waypoint GetWaypoint(int WaypointGUID)
+        {
+            foreach (Waypoint Wp in Waypoints)
+            {
+                if (Wp.GUID == WaypointGUID)
+                {
+                    return Wp;
+                }
+            }
+            return null;
         }
 
         public void UpdateWaypoints(long Tick)
@@ -259,13 +661,15 @@ namespace WorldServer
                 if (Waypoints.Count == 0)
                     return;
 
+                //System.Diagnostics.Trace.Assert(_Owner.Name != "Heinz Lutzen");
+
                 if (CurrentWaypoint != null && IsAtWaypointEnd())
                     EndWaypoint(Tick);
 
                 if (CanStartNextWaypoint(Tick))
                     SetNextWaypoint(Tick);
 
-                if (State == AiState.MOVING && Mvt.CurrentSpeed == 0)
+                if (State == AiState.MOVING && !_unit.MvtInterface.IsMoving)
                     State = AiState.STANDING;
 
                 if (State == AiState.STANDING && CurrentWaypoint != null)
@@ -334,13 +738,13 @@ namespace WorldServer
             //Log.Info("Waypoints", "Starting Waypoint");
 
             State = AiState.MOVING;
-            _Owner.GetUnit().MvtInterface.WalkTo(CurrentWaypoint.X, CurrentWaypoint.Y, CurrentWaypoint.Z, CurrentWaypoint.Speed);
+            _unit.MvtInterface.Move(new Point3D(CurrentWaypoint.X, CurrentWaypoint.Y, CurrentWaypoint.Z));
             if (!Started)
             {
                 // TODO : Messages,Emotes, etc
 
                 if(CurrentWaypoint.TextOnStart != "")
-                    _Owner.GetUnit().Say(CurrentWaypoint.TextOnStart, SystemData.ChatLogFilters.CHATLOGFILTERS_MONSTER_SAY);
+                    _unit.Say(CurrentWaypoint.TextOnStart, ChatLogFilters.CHATLOGFILTERS_MONSTER_SAY);
             }
 
             Started = true;
@@ -355,7 +759,7 @@ namespace WorldServer
             {
                 // TODO : Messages, Emote, etc
                 if(CurrentWaypoint.TextOnEnd != "")
-                    _Owner.GetUnit().Say(CurrentWaypoint.TextOnEnd, SystemData.ChatLogFilters.CHATLOGFILTERS_MONSTER_SAY);
+                    _unit.Say(CurrentWaypoint.TextOnEnd, ChatLogFilters.CHATLOGFILTERS_MONSTER_SAY);
             }
 
             NextAllowedMovementTime = Tick + CurrentWaypoint.WaitAtEndMS;

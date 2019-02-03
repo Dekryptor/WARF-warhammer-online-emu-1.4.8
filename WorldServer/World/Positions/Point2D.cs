@@ -1,26 +1,5 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿using System;
+using FrameWork;
 
 namespace WorldServer
 {
@@ -46,6 +25,8 @@ namespace WorldServer
 		/// Degrees to heading = degrees * (4096 / 360)
 		/// </remarks>
 		public const double RADIAN_TO_HEADING = (180.0/Math.PI)*(4096.0/360.0);
+
+        public const int UNITS_TO_FEET = 12;
 
 		/// <summary>
 		/// The X coord of this point
@@ -143,6 +124,19 @@ namespace WorldServer
 			return (ushort) heading;
 		}
 
+        public static Point2D GetOffsetFromHeading(ushort heading, ushort distance)
+        {
+            double angle = heading * HEADING_TO_RADIAN;
+
+            var point = new Point2D
+            {
+                X = (int) (-Math.Sin(angle) * distance * UNITS_TO_FEET),
+                Y = (int) (Math.Cos(angle) * distance * UNITS_TO_FEET)
+            };
+
+            return point;
+        }
+
 		/// <summary>
 		/// Get the point at the given heading and distance
 		/// </summary>
@@ -151,10 +145,10 @@ namespace WorldServer
 		/// <returns>Point at the given heading and distance</returns>
 		public Point2D GetPointFromHeading(ushort heading, int distance)
 		{
-            distance = (int)((float)distance*13.2f);
+            distance = (int)(distance*13.2f);
 			double angle = heading*HEADING_TO_RADIAN;
-			double targetX = X - (Math.Sin(angle)*distance);
-			double targetY = Y + (Math.Cos(angle)*distance);
+			double targetX = X - Math.Sin(angle)*distance;
+			double targetY = Y + Math.Cos(angle)*distance;
 
 			var point = new Point2D();
 
@@ -196,23 +190,14 @@ namespace WorldServer
 		/// <returns>Distance to point</returns>
 		public int GetDistance(IPoint2D point)
 		{
-            double dx = (double)(X - point.X);
-            double dy = (double)(Y - point.Y);
+            double dx = X - point.X;
+            double dy = Y - point.Y;
             double Range = Math.Sqrt(dx * dx + dy * dy);
-            Range = Range / Lerp(36.0, 13.50, Clamp(Range, 900));
+            Range = Range / UNITS_TO_FEET;
             return (int)(Range);
 		}
 
-        public int GetRealDistance(IPoint2D point)
-        {
-            double dx = (double)(X - point.X);
-            double dy = (double)(Y - point.Y);
-            double Range = Math.Sqrt(dx * dx + dy * dy);
-            Range = Range / Lerp(36.0, 13.50, Clamp(Range, 900));
-            return (int)(Range);
-        }
-
-        static public double Clamp(double value, double max)
+        public static double Clamp(double value, double max)
         {
             if (value > max)
                 value = max;
@@ -220,12 +205,33 @@ namespace WorldServer
             return value / max;
         }
 
-        static public double Lerp(double value1, double value2, double amount)
+        public static double Lerp(double value1, double value2, double amount)
         {
             return value1 + (value2 - value1) * amount;
         }
 
-		public virtual void Clear()
+        public static int Lerp(int src, int dest, float alpha)
+        {
+            return (int)(src + (dest - src) * alpha);
+        }
+
+        public static Point2D Lerp(Point2D a, Point2D b, float alpha)
+        {
+            var x = a.X + (b.X - a.X) * alpha;
+            var y = a.Y + (b.Y - a.Y) * alpha;
+            return new Point2D((int)x, (int)y);
+        }
+
+        public static float Clamp(float val, float min, float max)
+	    {
+	        return val < min ? min : (val > max ? max : val);
+	    }
+
+        public static int Clamp(int val, int min, int max)
+        {
+            return val < min ? min : (val > max ? max : val);
+        }
+        public virtual void Clear()
 		{
 			X = 0;
 			Y = 0;
@@ -239,8 +245,13 @@ namespace WorldServer
 		/// <returns></returns>
 		public override string ToString()
 		{
-			return string.Format("({0}, {1})", m_x.ToString(), m_y.ToString());
+			return string.Format("({0}, {1})", m_x, m_y);
 		}
+
+        public static implicit operator Vector2(Point2D inPoint)
+	    {
+	       return new Vector2(inPoint.X, inPoint.Y); 
+	    }
 
 		/// <summary>
 		/// Determine if another point is within a given radius
@@ -248,34 +259,54 @@ namespace WorldServer
 		/// <param name="point">Target point</param>
 		/// <param name="radius">Radius</param>
 		/// <returns>True if the point is within the radius, otherwise false</returns>
-		public bool IsWithinRadius(IPoint2D point, int radius)
+		public bool IsWithinRadiusUnits(IPoint2D point, int radius)
 		{
 			if (radius > ushort.MaxValue)
-			{
 				return GetDistance(point) <= radius;
-			}
 
-			uint rsquared = (uint) radius*(uint) radius;
+			uint rSquared = (uint) radius*(uint) radius;
 
 			int dx = X - point.X;
 
-			long dist = ((long) dx)*dx;
+			long dist = (long) dx * dx;
 
-			if (dist > rsquared)
-			{
+			if (dist > rSquared)
 				return false;
-			}
 
 			int dy = Y - point.Y;
 
-			dist += ((long) dy)*dy;
+			dist += (long) dy * dy;
 
-			if (dist > rsquared)
-			{
-				return false;
-			}
-
-			return true;
+			return dist <= rSquared;
 		}
-	}
+
+        /// <summary>
+        /// Determine if another point is within a given radius
+        /// </summary>
+        /// <param name="point">Target point</param>
+        /// <param name="radius">Radius</param>
+        /// <returns>True if the point is within the radius, otherwise false</returns>
+        public bool IsWithinRadiusFeet(IPoint2D point, int radius)
+        {
+            radius *= UNITS_TO_FEET;
+
+            if (radius > ushort.MaxValue)
+                return GetDistance(point) <= radius;
+
+            uint rSquared = (uint)radius * (uint)radius;
+
+            int dx = X - point.X;
+
+            long dist = (long)dx * dx;
+
+            if (dist > rSquared)
+                return false;
+
+            int dy = Y - point.Y;
+
+            dist += (long)dy * dy;
+
+            return dist <= rSquared;
+        }
+    }
 }

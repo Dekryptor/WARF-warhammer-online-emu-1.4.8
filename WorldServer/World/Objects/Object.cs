@@ -1,63 +1,32 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
+﻿
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-
-using Common;
+using System.Threading;
+using SystemData;
 using FrameWork;
 
 namespace WorldServer
 {
     public class Object : Point3D
     {
-        static public int RANGE_UPDATE_INTERVAL = 300; // Check des Ranged toutes les 300Ms
+        public static int RANGE_UPDATE_INTERVAL = 300; // Check des Ranged toutes les 300Ms
 
         public List<BaseInterface> Interfaces = new List<BaseInterface>();
 
         public EventInterface EvtInterface;
         public ScriptsInterface ScrInterface;
 
-        public UInt16 _ObjectId;
-        public UInt16 Oid 
-        { 
-            get 
-            { 
-                return _ObjectId; 
-            } 
-            set 
-            { 
-                _ObjectId = value; 
-            } 
-        }
-        private string _Name;
-        public string Name
-        {
-            get { return _Name; }
-            set { _Name = value; }
-        }
+        // This is an int for the purpose of the atomic Interlocked functions.
+        // Its value should not exceed 65535.
+        private int _pendingOid;
+
+        public ushort Oid { get; private set; }
+
+        public virtual string Name { get; set; }
 
         public Object()
         {
-            if(EvtInterface == null && !IsPlayer())
+            if (EvtInterface == null && !IsPlayer())
                 EvtInterface = AddInterface<EventInterface>();
 
             ScrInterface = AddInterface<ScriptsInterface>();
@@ -65,39 +34,65 @@ namespace WorldServer
             IsActive = false;
         }
 
-        private bool _Disposed = false;
-        public bool IsDisposed { get { return _Disposed; } }
-        public virtual void Dispose()
+        #region Disposal
+
+        public bool IsDisposed { get; protected set; }
+        public bool PendingDisposal { get; set; }
+
+        public virtual void Destroy()
         {
-            if (!_Disposed)
+            if (IsInWorld())
+                PendingDisposal = true;
+            else
             {
-                for (int i = 0; i < Interfaces.Count; ++i)
-                    Interfaces[i].Stop();
-
-                RemoveFromWorld();
-
-                _Disposed = true;
+                //Log.Info(Name, "Object disposed directly.");
+                Dispose();
             }
         }
 
-        public virtual void Update(long Tick)
+        public virtual void Dispose()
         {
-            for(int i=0;i<Interfaces.Count;++i)
-                Interfaces[i].Update(Tick);
+            if (IsDisposed)
+                return;
+
+            IsDisposed = true;
+
+            for (int i = 0; i < Interfaces.Count; ++i)
+                Interfaces[i].Stop();
+
+            RemoveFromWorld();
         }
 
-        public bool _Loaded = false;
-        public bool IsLoad() 
-        { 
-            return _Loaded; 
+        #endregion
+
+        public virtual void Update(long tick)
+        {
+            if (PendingDisposal)
+            {
+                Dispose();
+                return;
+            }
+
+            for (int i = 0; i < Interfaces.Count; ++i)
+                Interfaces[i].Update(tick);
         }
+
+        #region Load/Save
+
+        public bool Loaded;
+
         public void Load()
         {
-            _Loaded = true;
+            Loaded = true;
             OnLoad();
         }
 
         public virtual void OnLoad()
+        {
+            LoadInterfaces();
+        }
+
+        protected virtual void LoadInterfaces()
         {
             foreach (BaseInterface Interface in Interfaces)
                 Interface.Load();
@@ -118,6 +113,8 @@ namespace WorldServer
             }
         }
 
+        #endregion
+
         #region Interfaces
 
         public BaseInterface AddInterface(BaseInterface Interface)
@@ -131,7 +128,7 @@ namespace WorldServer
             return Interface;
         }
 
-        public T AddInterface<T>() where T:BaseInterface 
+        public T AddInterface<T>() where T : BaseInterface
         {
             BaseInterface Interface = Activator.CreateInstance<T>();
 
@@ -141,7 +138,68 @@ namespace WorldServer
             }
 
             Interface.SetOwner(this);
-            return Interface as T;
+            return (T)Interface;
+        }
+
+        public void PlayEffect(ushort effectID, Point3D position = null)
+        {
+
+            PacketOut Out = new PacketOut((byte)Opcodes.F_PLAY_EFFECT, 30);
+            Out.WriteUInt16(effectID);
+            Out.WriteUInt16(0);
+            if (position != null)
+            {
+                Out.WriteUInt32((uint)position.X);
+                Out.WriteUInt32((uint)position.Y);
+                Out.WriteUInt32((uint)position.Z);
+            }
+            else
+            {
+                Out.WriteUInt32((uint)WorldPosition.X);
+                Out.WriteUInt32((uint)WorldPosition.Y);
+                Out.WriteUInt32((uint)WorldPosition.Z);
+            }
+            Out.WriteUInt16(100);
+            Out.WriteUInt16(100);
+            Out.WriteUInt16(100);
+            Out.WriteUInt16(100);
+
+            foreach (var p in GetPlayersInRange(400))
+                p.SendPacket(Out);
+
+            if (this is Player)
+                ((Player)this).SendPacket(Out);
+        }
+
+
+
+        /// <summary>
+        /// Sets object interaction state 
+        /// </summary>
+        /// <param name="state">1 = interactive, 15=disabled</param>
+        public void UpdateInteractState(byte state)
+        {
+            PacketOut Out = new PacketOut((byte)Opcodes.F_UPDATE_STATE, 20);
+            Out.WriteUInt16(Oid);
+            Out.WriteByte(1);
+            Out.WriteByte(state);
+            Out.Fill(0, 6);
+            DispatchPacket(Out, false);
+        }
+
+        public void PlaySound(ushort soundID, Boolean sendarea = true)
+        {
+            PacketOut Out = new PacketOut((byte)Opcodes.F_PLAY_SOUND, 30);
+            Out.WriteByte(0);
+            Out.WriteUInt16(soundID);
+            Out.Fill(10, 0);
+
+            if(sendarea)
+                foreach (var p in GetPlayersInRange(400))
+                    p.SendPacket(Out);
+
+            if (this is Player)
+                ((Player)this).SendPacket(Out);
         }
 
         public BaseInterface RemoveInterface(BaseInterface Interface)
@@ -152,52 +210,98 @@ namespace WorldServer
             return Interface;
         }
 
-        public BaseInterface GetInterface<T>() where T : BaseInterface
+        public T GetInterface<T>() where T : BaseInterface
         {
             lock (Interfaces)
                 foreach (BaseInterface Interface in Interfaces)
                     if (Interface is T)
-                        return Interface;
+                        return (T)Interface;
 
             return null;
         }
 
         #endregion
 
+        /// <summary>
+        /// Sets the object ID in a thread-safe manner.
+        /// </summary>
+        public void SetOid(int newOid)
+        {
+            Interlocked.Exchange(ref _pendingOid, newOid);
+
+            Oid = (ushort)_pendingOid;
+        }
+
+        /// <summary>
+        /// Sets the object ID to zero only if it has not been changed by another region.
+        /// </summary>
+        /// <param name="oldOid">The Oid previously set by the region which is calling this function.</param>
+        public void ZeroOid(int oldOid)
+        {
+            Interlocked.CompareExchange(ref _pendingOid, 0, oldOid);
+
+            Oid = (ushort)_pendingOid;
+        }
+
         #region Sender
 
-        public virtual void SendMeTo(Player Plr)
+        public virtual void SendMeTo(Player plr)
         {
-
+           
         }
-        public virtual void SendRemove(Player Plr)
+
+        public virtual void SendRemove(Player plr)
         {
-            PacketOut Out = new PacketOut((byte)Opcodes.F_REMOVE_PLAYER);
+            PacketOut Out = new PacketOut((byte)Opcodes.F_REMOVE_PLAYER, 4);
             Out.WriteUInt16(Oid);
             Out.WriteUInt16(0);
-            if (Plr != null)
-                Plr.SendPacket(Out);
+            if (plr != null)
+                plr.SendPacket(Out);
             else
                 DispatchPacket(Out, false);
+
         }
-        public virtual void SendInteract(Player Plr,InteractMenu Menu)
+        public virtual void SendInteract(Player player, InteractMenu menu)
         {
-            ScrInterface.OnInteract(this, Plr, Menu);
-            WorldMgr.GeneralScripts.OnWorldPlayerEvent("INTERACT", Plr, this);
+            ScrInterface.OnInteract(this, player, menu);
+            WorldMgr.GeneralScripts.OnWorldPlayerEvent("INTERACT", player, this);
         }
-        public virtual void Say(string Msg, SystemData.ChatLogFilters Filter)
+        public virtual void SendInteractEnd(Player plr)
         {
-            if (Msg == null || Msg.Length == 0)
+
+        }
+        public virtual void Say(string message, ChatLogFilters chatFilter = ChatLogFilters.CHATLOGFILTERS_SAY)
+        {
+            if (string.IsNullOrEmpty(message))
                 return;
 
-            foreach (Player Plr in _PlayerRanged.ToArray())
+            foreach (Player Plr in PlayersInRange.ToArray())
+                Plr.SendMessage(this, message, chatFilter);
+        }
+
+        public virtual void DispatchPacketUnreliable(PacketOut Out, bool sendToSelf, Unit sender)
+        {
+            if (PlayersInRange.Count > 100)
             {
-                if (Plr.GmLevel != 0 || GetPlayer().GmLevel != 0 || Program.Config.ChatBetweenRealms || Plr.Realm == GetPlayer().Realm)
-                    Plr.SendMessage(this, Msg, Filter);
+                if (sender != this)
+                {
+                    Player plrSender = sender as Player;
+                    plrSender?.SendPacket(Out);
+                }
+
+                return;
             }
 
-            if (IsPlayer())
-                GetPlayer().SendMessage(this, Msg, Filter);
+            lock (PlayersInRange)
+                foreach (Player player in PlayersInRange)
+                    player.SendCopy(Out);
+        }
+
+        public virtual void DispatchPacket(PacketOut Out, bool sendToSelf,bool playerstate = false)
+        {
+            lock (PlayersInRange)
+                foreach (Player player in PlayersInRange)
+                    player.SendCopy(Out);
         }
 
         #endregion
@@ -207,13 +311,17 @@ namespace WorldServer
         public bool IsPlayer() { return this is Player; }
         public bool IsUnit() { return this is Unit; }
         public bool IsCreature() { return this is Creature; }
-        public bool IsDoor() { return this is Door; }
+        public bool IsInstanceSpawn() { return this is InstanceSpawn; }
+        public bool IsPet() { return this is Pet; }
         public bool IsGameObject() { return this is GameObject; }
         public bool IsChapter() { return this is ChapterObject; }
 
         public Unit GetUnit() { return this as Unit; }
         public Player GetPlayer() { return this as Player; }
         public Creature GetCreature() { return this as Creature; }
+        public InstanceSpawn GetInstanceSpawn() { return this as InstanceSpawn; }
+        public InstanceBossSpawn GetInstanceBossSpawn() { return this as InstanceBossSpawn; }
+        public Pet GetPet() { return this as Pet; }
         public GameObject GetGameObject() { return this as GameObject; }
 
         #endregion
@@ -222,26 +330,39 @@ namespace WorldServer
 
         public override string ToString()
         {
-            return string.Format("(OffX = {0}, OffY = {1},Heading = {2}, Oid = {3}, Name= {4})", XOffset.ToString(), YOffset.ToString(),Heading.ToString(), Oid.ToString(), Name) + base.ToString();
+            return $"(OffX = {XOffset}, OffY = {YOffset}, Heading = {Heading}, Oid = {Oid}, Name= {Name}, Radius= {BaseRadius}, Active= {_isActive})" + base.ToString();
         }
 
-        public UInt16 Heading;
-        public UInt16 XOffset, YOffset;
-        public UInt32 XZone, YZone;
+        public ushort Heading;
+        public ushort XOffset, YOffset;
 
-        public ZoneMgr _ZoneMgr;
+        public float BaseRadius { get; set; } = 4.5f;
+
         public CellMgr _Cell;
-        public ZoneMgr Zone
+
+        /// <summary>Current zone containing the object, may be null</summary>
+        public ZoneMgr Zone { get; protected set; }
+
+        /// <summary>Current zone id containing the object, may be null</summary>
+        public ushort? ZoneId => Zone?.ZoneId;
+        /// <summary>Current region containing the object, may be null</summary>
+        public RegionMgr Region => Zone?.Region;
+        /// <summary>True is zone is not null</summary>
+        public bool IsInWorld() => Zone != null;
+
+        public readonly Point3D WorldPosition = new Point3D();
+
+        public virtual void SetZone(ZoneMgr newZone)
         {
-            get { return _ZoneMgr; }
-            set{ _ZoneMgr = value; }
+            if (newZone == null)
+                throw new NullReferenceException("NULL ZoneMgr was passed in SetZone.");
+            Zone = newZone;
         }
-        public RegionMgr Region
+
+        public void ClearZone()
         {
-            get { return _ZoneMgr != null ? _ZoneMgr.Region : null; }
+            Zone = null;
         }
-        public bool IsInWorld() { return _ZoneMgr != null; }
-        public Point3D WorldPosition = new Point3D();
 
         public void RemoveFromWorld()
         {
@@ -251,45 +372,53 @@ namespace WorldServer
             Region.RemoveObject(this);
         }
 
-        public void CalculOffset()
+        public void UpdateOffset()
         {
-            if (!IsInWorld() || X==0 || Y==0)
+            if (!IsInWorld() || X == 0 || Y == 0)
                 return;
 
-            UInt16 Ox = (UInt16)Math.Truncate((decimal)(X / 4096 + Zone.Info.OffX));
-            UInt16 Oy = (UInt16)Math.Truncate((decimal)(Y / 4096 + Zone.Info.OffY));
+            ushort offX = (ushort)Math.Truncate((decimal)(X / 4096 + Zone.Info.OffX));
+            ushort offY = (ushort)Math.Truncate((decimal)(Y / 4096 + Zone.Info.OffY));
 
-            if(Ox != XOffset || Oy != YOffset)
-                SetOffset(Ox, Oy);
+            if (offX != XOffset || offY != YOffset)
+                SetOffset(offX, offY);
         }
 
-        public void CalcWorldPositions()
+        public void UpdateWorldPosition()
         {
-            int x = X > 32768 ? X - 32768 : X;
-            int y = Y > 32768 ? Y - 32768 : Y;
+            //int x = X > 32768 ? X - 32768 : X;
+            //int y = Y > 32768 ? Y - 32768 : Y;
 
-
-            WorldPosition.X = (int)((int)XZone + ((int)((int)x) & 0x00000FFF));
-            WorldPosition.Y = (int)((int)YZone + ((int)((int)y) & 0x00000FFF));
+            //WorldPosition.X = (int)XZone + (x & 0x00000FFF);
+            //WorldPosition.Y = (int)YZone + (y & 0x00000FFF);
+            WorldPosition.X = (Zone.Info.OffX << 12) + X;
+            WorldPosition.Y = (Zone.Info.OffY << 12) + Y;
             WorldPosition.Z = Z;
-            if (Zone != null && Zone.ZoneId == 161)
-                WorldPosition.Z += 16384;
         }
 
-        public void SetOffset(UInt16 OffX, UInt16 OffY)
+        /// <summary>
+        /// Sets the object's X and Y offsets for coordinate calculations.
+        /// Return whether or not the player's zone changed as a result of this.
+        /// </summary>
+        /// <param name="offX"></param>
+        /// <param name="offY"></param>
+        /// <returns></returns>
+        public ushort SetOffset(ushort offX, ushort offY, bool checkZone = true)
         {
-            if (OffX <= 0 || OffY <= 0)
-                return;
+            Player player = this as Player;
+            if (player != null && player.MoveBlock)
+                return 0;
 
-            XOffset = OffX;
-            YOffset = OffY;
-            XZone = (uint)(OffX << 12);
-            YZone = (uint)(OffY << 12);
+            if (offX == 0 || offY == 0)
+                return 0;
 
-            if (IsInWorld())
-                Region.CheckZone(this);
+            XOffset = offX;
+            YOffset = offY;
+
+            if (checkZone && IsInWorld())
+                return Region.CheckZone(this);
+            return 0;
         }
-
 
         /// <summary>
 		/// Returns the angle towards a target spot in degrees, clockwise
@@ -297,219 +426,328 @@ namespace WorldServer
 		/// <param name="tx">target x</param>
 		/// <param name="ty">target y</param>
 		/// <returns>the angle towards the spot</returns>
-        public float GetAngle( IPoint2D point )
-		{
-			float headingDifference = ( GetHeading( point ) & 0xFFF ) - ( this.Heading & 0xFFF );
-
-			if (headingDifference < 0)
-				headingDifference += 4096.0f;
-
-			return (headingDifference * 360.0f / 4096.0f);
-		}
-
-        /// <summary>
-        /// Get distance to a point
-        /// </summary>
-        /// <remarks>
-        /// If either Z-value is zero, the z-axis is ignored
-        /// </remarks>
-        /// <param name="point">Target point</param>
-        /// <returns>Distance</returns>
-        public override int GetDistanceTo( IPoint3D point )
+        public float GetAngle(IPoint2D point)
         {
-			Object obj = point as Object;
+            float headingDifference = (GetWorldHeading(point) & 0xFFF) - (Heading & 0xFFF);
 
-			if ( obj == null || this._ZoneMgr == obj._ZoneMgr )
-			{
-				return (int)(base.GetDistanceTo( point ));
-			}
-			else
-			{
-				return int.MaxValue;
-			}
+            if (headingDifference < 0)
+                headingDifference += 4096.0f;
+
+            return (headingDifference * 360.0f / 4096.0f);
         }
-      
-        /// <summary>
-        /// Get distance to a point (with z-axis adjustment)
-        /// </summary>
-        /// <remarks>
-        /// If either Z-value is zero, the z-axis is ignored
-        /// </remarks>
-        /// <param name="point">Target point</param>
-        /// <param name="zfactor">Z-axis factor - use values between 0 and 1 to decrease the influence of Z-axis</param>
-        /// <returns>Adjusted distance</returns>
-        public override int GetDistanceTo( IPoint3D point, double zfactor )
-        {
-			Object obj = point as Object;
 
-			if ( obj == null || this._ZoneMgr == obj._ZoneMgr )
-			{
-				return (int)(base.GetDistanceTo( point, zfactor ));
-			}
-			else
-			{
-				return -1;
-			}
+        #region Distance and Heading Checks
+
+        public int Get2DDistanceToWorldPoint(Point2D point)
+        {
+            double dx = WorldPosition.X - point.X;
+            double dy = WorldPosition.Y - point.Y;
+            double range = Math.Sqrt(dx * dx + dy * dy);
+            range = range / UNITS_TO_FEET;
+            return (int)(range);
+        }
+
+        public int Get2DDistanceToObject(Object obj, bool factorRadius = false)
+        {
+            if (obj == null || Region != obj.Region)
+                return int.MaxValue;
+
+            double dx = WorldPosition.X - obj.WorldPosition.X;
+            double dy = WorldPosition.Y - obj.WorldPosition.Y;
+            double range = Math.Sqrt(dx * dx + dy * dy);
+            range = range / UNITS_TO_FEET;
+
+            if (!factorRadius)
+                return (int)range;
+
+            return Math.Max(0, (int)(range - (BaseRadius + obj.BaseRadius)));
         }
 
         /// <summary>
-        /// Checks if an object is within a given radius
+        /// Returns the distance between this object's WorldPosition and the supplied world point.
         /// </summary>
-        /// <param name="obj">Target object</param>
-        /// <param name="radius">Radius</param>
-        /// <returns>False if the object is null, in a different region, or outside the radius; otherwise true</returns>
-        public bool IsWithinRadius( GameObject obj, int radius)
+        /// <param name="point"></param>
+        /// <returns></returns>
+        public int GetDistanceToWorldPoint(Point3D point)
         {
-			return IsWithinRadius(obj, radius, false);
-		}
+            double dx = (WorldPosition.X - point.X);
+            double dy = (WorldPosition.Y - point.Y);
+            double dz = (Z - point.Z);
+            double range = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            range = range / UNITS_TO_FEET;
+            return (int)(range);
+        }
 
         /// <summary>
-		/// Checks if an object is within a given radius, optionally ignoring z values
-		/// </summary>
-		/// <param name="obj">Target object</param>
-		/// <param name="radius">Radius</param>
-		/// <param name="ignoreZ">Ignore Z values</param>
-		/// <returns>False if the object is null, in a different region, or outside the radius; otherwise true</returns>
-		public bool IsWithinRadius(Object obj, int radius, bool ignoreZ)
-		{
-			if (obj == null)
-				return false;
+        /// Returns the distance between the WorldPositions of two objects.
+        /// If factorRadius is true, removes the collision radii of the two objects from the returned value.
+        /// </summary>
+        /// <param name="obj">The distant object.</param>
+        /// <param name="factorRadius">Whether or not to remove the collision radii of the two objects from the final result (used by ability range checks)</param>
+        /// <returns></returns>
+        public int GetDistanceToObject(Object obj, bool factorRadius = false)
+        {
+            if (obj == null || Region != obj.Region)
+                return int.MaxValue;
 
-			if (this._ZoneMgr != obj._ZoneMgr)
-				return false;
+            double dx = WorldPosition.X - obj.WorldPosition.X;
+            double dy = WorldPosition.Y - obj.WorldPosition.Y;
+            double dz = Z - obj.Z;
+            double range = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            range = range / UNITS_TO_FEET;
 
-			return base.IsWithinRadius(obj, radius, ignoreZ);
-		}
+            if (!factorRadius)
+                return (int)range;
+
+            return Math.Max(0, (int)(range - (BaseRadius + obj.BaseRadius)));
+        }
+
+        public ulong GetDistanceSquare(Point3D target)
+        {
+            double dx = WorldPosition.X - target.X;
+            double dy = WorldPosition.Y - target.Y;
+            double dz = Z - target.Z;
+            return (ulong)((dx * dx + dy * dy + dz * dz) / UNITS_TO_FEET);
+        }
+
+        public ulong GetDistanceSquare(Object obj)
+        {
+            if (obj == null || Region != obj.Region)
+                return int.MaxValue;
+
+            double dx = WorldPosition.X - obj.WorldPosition.X;
+            double dy = WorldPosition.Y - obj.WorldPosition.Y;
+            double dz = Z - obj.Z;
+            return (ulong)((dx * dx + dy * dy + dz * dz) / UNITS_TO_FEET);
+        }
+
+        public virtual int GetAbilityRangeTo(Unit caster)
+        {
+            return GetDistanceToObject(caster, true);
+        }
+
+        public ushort GetWorldHeading(IPoint2D point)
+        {
+            float dx = point.X - WorldPosition.X;
+            float dy = point.Y - WorldPosition.Y;
+
+            double heading = Math.Atan2(-dx, dy) * RADIAN_TO_HEADING;
+
+            if (heading < 0)
+                heading += 4096;
+
+            return (ushort)heading;
+        }
+
+        public bool IsInCastRange(Object obj, uint radiusFeet)
+        {
+            if (obj == null || Region != obj.Region)
+                return false;
+
+            if (IsMoving && obj.IsMoving && radiusFeet == 5)
+                radiusFeet = 8;
+            
+           
+            radiusFeet = (uint)(radiusFeet + BaseRadius + obj.BaseRadius);
+
+            return WorldPosition.IsWithinRadiusFeet(obj.WorldPosition, (int)radiusFeet);
+        }
+
+        public bool ObjectWithinRadiusFeet(Object obj, int radius)
+        {
+            if (obj.WorldPosition == null)
+            {
+                //Log.Error(Name, "RadiusFeet check against " + obj.Name + " with NULL WorldPosition");
+                return false;
+            }
+
+            radius *= UNITS_TO_FEET;
+
+            if (radius > ushort.MaxValue)
+                return GetDistance(obj) <= radius;
+
+            double dx = WorldPosition.X - obj.WorldPosition.X;
+            double dy = WorldPosition.Y - obj.WorldPosition.Y;
+            double dz = WorldPosition.Z - obj.WorldPosition.Z;
+            double distSquare = dx * dx + dy * dy + dz * dz;
+
+            return distSquare <= radius * radius;
+        }
+
+        public bool PointWithinRadiusFeet(Point3D point, int radius)
+        {
+
+            if (WorldPosition == null)
+                return false;
+
+            if (point == null)
+                return false;
+
+            radius *= UNITS_TO_FEET;
+
+            if (radius > ushort.MaxValue)
+                return GetDistance(point) <= radius;
+
+            double dx = WorldPosition.X - point.X;
+            double dy = WorldPosition.Y - point.Y;
+            double dz = WorldPosition.Z - point.Z;
+            double distSquare = dx * dx + dy * dy + dz * dz;
+
+            return distSquare <= radius * radius;
+        }
 
         /// <summary>
-		/// determines wether a target object is front
-		/// in front is defined as north +- viewangle/2
-		/// </summary>
-		/// <param name="target"></param>
-		/// <param name="viewangle"></param>
-		/// <returns></returns>
-		public virtual bool IsObjectInFront(Object target, double viewangle)
-		{
-			return IsObjectInFront(target, viewangle, true);
-		}
-
-        /// <summary>
-		/// determines wether a target object is front
-		/// in front is defined as north +- viewangle/2
+		/// Determines whether a target object is in front of this one. Optionally factors in the distance between the objects. In front is defined as north +- viewangle/2.
 		/// </summary>
 		/// <param name="target"></param>
 		/// <param name="viewangle"></param>
 		/// <param name="rangeCheck"></param>
 		/// <returns></returns>
-		public virtual bool IsObjectInFront(Object target, double viewangle, bool rangeCheck)
-		{
-			if (target == null)
-				return false;
-			float angle = this.GetAngle(target);
-			if (angle >= 360 - viewangle / 2 || angle < viewangle / 2)
-				return true;
-
-			if (rangeCheck)
-                return this.IsWithinRadius( target, 1 );
-			else
-                return false;
-		}
-
-        private bool _IsMoving = false;
-        public bool IsMoving
+		public virtual bool IsObjectInFront(Object target, double viewangle, uint MaxRadius = 0)
         {
-            get { return _IsMoving; }
-            set
+            if (target == null || target.Zone == null)
+                return false;
+            float angle = GetAngle(new Point2D(target.WorldPosition.X, target.WorldPosition.Y));
+            if (angle >= 360 - viewangle / 2 || angle < viewangle / 2)
             {
-                if (_IsMoving && !value)
-                    EvtInterface.Notify(EventName.ON_STOP_MOVE, this, null);
+                return MaxRadius == 0 || IsInCastRange(target, MaxRadius);
+            }
 
-                _IsMoving = value;
-                if (_IsMoving)
-                    EvtInterface.Notify(EventName.ON_MOVE, this, null);
+            return false;
+        }
+
+        #endregion
+
+        private bool _isMoving;
+        protected DateTime? _knockbackTime;
+
+        public DateTime? KnockbackTime
+        {
+            get
+            {
+                return _knockbackTime;
             }
         }
+
+        public bool IsMoving
+        {
+            get { return _isMoving; }
+            set
+            {
+                if (_isMoving && !value)
+                    EvtInterface.Notify(EventName.OnStopMove, this, null);
+
+                _isMoving = value;
+                if (_isMoving)
+                    EvtInterface.Notify(EventName.OnMove, this, null);
+            }
+        }
+
         public Point2D LastRangeCheck = new Point2D(0,0);
 
-        public virtual void InitPosition(UInt16 OffX, UInt16 OffY, UInt16 PinX, UInt16 PinY)
+        public virtual void InitPosition(ushort OffX, ushort OffY, ushort PinX, ushort PinY)
         {
             X = PinX;
             Y = PinY;
             XOffset = OffX;
             YOffset = OffY;
         }
-        public virtual bool SetPosition(UInt16 PinX, UInt16 PinY, UInt16 PinZ, UInt16 Head, bool SendState=false)
+        public virtual bool SetPosition(ushort pinX, ushort pinY, ushort pinZ, ushort heading, ushort zoneId, bool sendState = false)
         {
-            bool Updated = false;
-            if (PinX != X || PinY != Y || PinZ != Z || Head != Heading)
-            {
-                X = PinX;
-                Y = PinY;
-                Z = PinZ;
-                Heading = Head;
+            //Player plr = this as Player;
 
-                if(!IsPlayer())
-                    IsMoving = true;
+            bool updated = false;
+            bool doUpdate = false;
+
+            if (zoneId != Zone.ZoneId)
+            {
+                ZoneMgr newZone = Region.GetZoneMgr(zoneId);
+
+                if (newZone == null)
+                    return false;
+
+                //plr?.DebugMessage("Moving from "+Zone.Info.Name+" to "+newZone.Info.Name, ChatLogFilters.CHATLOGFILTERS_ZONE_AREA, true);
+
+                Zone.RemoveObject(this);
+                newZone.AddObject(this);
+
+                doUpdate = true;
+            }
+
+            if (doUpdate || pinX != X || pinY != Y || pinZ != Z || heading != Heading)
+            {
+                X = pinX;
+                Y = pinY;
+                Z = pinZ;
+                Heading = heading;
+
+                //plr?.DebugMessage($"Moving to {X}, {Y}, {Z} in {Zone.Info.Name}", ChatLogFilters.CHATLOGFILTERS_ZONE_AREA, true);
+
+                UpdateWorldPosition();
+                UpdateOffset();
 
                 if (!IsPlayer())
                 {
-                    CalculOffset();
-                    CalcWorldPositions();
-
-                    if (SendState)
+                    IsMoving = true;
+                    if (sendState)
                         GetUnit().StateDirty = true;
                 }
                 else
                 {
-                    CalcWorldPositions();
+                    ushort newOffsetX = (ushort)Math.Truncate((decimal)(X / 4096 + Zone.Info.OffX));
+                    ushort newOffsetY = (ushort)Math.Truncate((decimal)(Y / 4096 + Zone.Info.OffY));
 
-                    UInt16 Ox = (UInt16)Math.Truncate((decimal)(X / 4096 + Zone.Info.OffX));
-                    UInt16 Oy = (UInt16)Math.Truncate((decimal)(Y / 4096 + Zone.Info.OffY));
-
-                    if (Ox != XOffset || Oy != YOffset)
-                    {
+                    if (newOffsetX != XOffset || newOffsetY != YOffset)
                         return false;
-                    }
                 }
 
-                Updated = Region.UpdateRange(this);
+                updated = Region.UpdateRange(this);
             }
             else if (!IsPlayer())
                 IsMoving = false;
 
-            return Updated;
+            return updated;
         }
 
-        public bool _IsVisible = true;
+        private bool _isVisible = true;
         public bool IsVisible
         {
             get
             {
-                return _IsVisible;
+                return _isVisible;
             }
             set
             {
-                if (_IsVisible != value)
+                if (_isVisible != value)
                 {
-                    _IsVisible = value;
+                    _isVisible = value;
                     if (IsInWorld())
                         Region.UpdateRange(this, true);
                 }
             }
         }
 
-        public bool _IsActive;
+        private bool _isActive;
         public bool IsActive
         {
             get
             {
-                return _IsActive;
+                return _isActive;
             }
             set
             {
-                _IsActive = value;
+                // Azarael - disabling Active status did not clear ranged list
+                if (value == _isActive)
+                    return;
+
+                _isActive = value;
                 if (IsInWorld())
-                    Region.UpdateRange(this,true);
+                {
+                    if (_isActive)
+                        Region.UpdateRange(this, true);
+                    else
+                        ClearRange();
+                }
             }
         }
 
@@ -517,78 +755,189 @@ namespace WorldServer
 
         #region Range
 
-        public List<Object> _ObjectRanged = new List<Object>();
-        public List<Player> _PlayerRanged = new List<Player>();
+        public List<Object> ObjectsInRange = new List<Object>();
+        public List<Player> PlayersInRange = new List<Player>();
 
-        public virtual bool HasInRange(Object Obj)
+        public bool InRegionChange;
+
+        public virtual bool HasInRange(Object obj)
         {
-            return _ObjectRanged.Contains(Obj);
-        }
-        public virtual void AddInRange(Object Obj)
-        {
-            if (Obj == null)
-                return;
-
-            _ObjectRanged.Add(Obj);
-
-            if (Obj.IsPlayer())
-                _PlayerRanged.Add(Obj.GetPlayer());
-        }
-        public virtual void RemoveInRange(Object Obj)
-        {
-            if (Obj == null)
-                return;
-
-            if (!_ObjectRanged.Contains(Obj))
-                return;
-
-            _ObjectRanged.Remove(Obj);
-
-            if(Obj.IsPlayer())
-                _PlayerRanged.Remove(Obj.GetPlayer());
-
-            if(IsPlayer())
-                Obj.SendRemove(GetPlayer());
-        }
-        public virtual void ClearRange()
-        {
-            SendRemove(null);
-
-            foreach (Object Ranged in _ObjectRanged)
-                Ranged.RemoveInRange(this);
-
-            _PlayerRanged.Clear();
-            _ObjectRanged.Clear();
+            lock (ObjectsInRange)
+                return ObjectsInRange.Contains(obj);
         }
 
-        public virtual void DispatchPacket(PacketOut Out, bool Self)
+        public List<Player> GetPlayersInRange(int distance, bool includeSelf = false)
         {
-            foreach (Object Player in _PlayerRanged)
-                if (Player != null && Player != this)
-                    Player.GetPlayer().SendCopy(Out);
-
-            if (Self && IsPlayer())
-                GetPlayer().SendPacket(Out); 
-        }
-
-        public virtual void DispatchGroup(PacketOut Out)
-        {
-            if (IsPlayer())
+            List<Player> players = new List<Player>();
+            lock(PlayersInRange)
             {
-                Player Plr = GetPlayer();
-                if (Plr.Client == null)
+                foreach (var player in PlayersInRange)
+                    if (ObjectWithinRadiusFeet(player, distance))
+                        players.Add(player);
+            }
+
+            if(includeSelf && GetPlayer() != null)
+                players.Add(GetPlayer());
+            return players;
+        }
+
+        public List<T> GetInRange<T>(int distance) where T : Object
+        {
+            List<T> objList = new List<T>();
+            lock (ObjectsInRange)
+            {
+                foreach (var obj in ObjectsInRange)
+                    if (obj is T && ObjectWithinRadiusFeet(obj, distance))
+                        objList.Add((T)obj);
+            }
+
+            return objList;
+        }
+
+        /// <summary>
+        /// Called by the Region manager when another object comes into this object's range.
+        /// </summary>
+        public virtual void AddInRange(Object obj)
+        {
+            if (obj == null)
+                return;
+
+            lock (ObjectsInRange)
+                ObjectsInRange.Add(obj);
+
+            Player plr = obj as Player;
+
+            if (plr != null)
+            {
+                lock (PlayersInRange)
+                    PlayersInRange.Add(plr);
+            }
+
+            ScrInterface.OnEnterRange(this, obj);
+        }
+
+        /// <summary>
+        /// Called by the Region manager when an object leaves this object's range, and by another object when it clears its ranged object lists.
+        /// </summary>
+        /// <param name="obj"></param>
+        public virtual void RemoveInRange(Object obj)
+        {
+            if (obj == null)
+                return;
+
+            lock (ObjectsInRange)
+            {
+                if (!ObjectsInRange.Contains(obj))
                     return;
 
-                if (Plr.GrpInterface.IsInGroup())
-                    Plr.GrpInterface.CurrentGroup.SendPacket(Out);
-                else
-                    Plr.SendPacket(Out);
+                ObjectsInRange.Remove(obj);
             }
+
+            Player plr = obj as Player;
+
+            if (plr != null)
+            {
+                lock (PlayersInRange)
+                    PlayersInRange.Remove(plr);
+            }
+
+            Player thisPlayer = this as Player;
+
+            if (thisPlayer != null)
+                obj.SendRemove(thisPlayer);
+        }
+
+        /// <summary>
+        /// Called by the player when loading a new region and by the Region manager when leaving a region.
+        /// </summary>
+        public virtual void ClearRange(bool fromNewRegion = false)
+        {
+            // When leaving a region, notify players within that this player left if the region is still open
+            if (!fromNewRegion)
+                SendRemove(null);
+
+            List<Object> rangedObjects = new List<Object>();
+
+            lock (ObjectsInRange)
+                rangedObjects.AddRange(ObjectsInRange);
+
+            // Remove this object from other objects' ranged lists
+            foreach (Object rangedObject in rangedObjects)
+                rangedObject.RemoveInRange(this);
+
+            lock (PlayersInRange)
+                PlayersInRange.Clear();
+
+            lock(ObjectsInRange)
+                ObjectsInRange.Clear();
         }
 
         public virtual void OnRangeUpdate()
         {
 
+        }
+
+        #endregion
+
+        #region Interaction
+
+        public long CountdownTimerEnd { get; set; }
+
+        protected Player CapturingPlayer;
+        protected object CaptureLock = new object();
+        public ushort CaptureDuration;
+
+        public virtual bool AllowInteract(Player interactor)
+        {
+            return GetDistanceToObject(interactor, true) <= 15;
+        }
+
+        // Should always be from same thread as this object
+        public virtual void BeginInteraction(Player interactor)
+        {
+            if (CapturingPlayer != null)
+            {
+                if (!CapturingPlayer._Value.Online || GetDistanceTo(CapturingPlayer) > 50)
+                    interactor.SendClientMessage($"Removed bugged capturer {CapturingPlayer.Name} from {Name}.", ChatLogFilters.CHATLOGFILTERS_USER_ERROR);
+
+                else
+                {
+                    interactor.SendClientMessage(CapturingPlayer.Name + " is already interacting with this object.", ChatLogFilters.CHATLOGFILTERS_USER_ERROR);
+                    return;
+                }
+            }
+
+            CapturingPlayer = interactor;
+
+            BuffInfo buffInfo = AbilityMgr.GetBuffInfo((ushort) GameBuffs.Interaction);
+            buffInfo.Duration = CaptureDuration;
+            CapturingPlayer.BuffInterface.QueueBuff(new BuffQueueInfo(CapturingPlayer, CapturingPlayer.Level, buffInfo, InteractionBuff.GetNew, LinkToCaptureBuff));
+
+            if (interactor.IsMounted)
+                interactor.Dismount();
+        }
+
+        public virtual void LinkToCaptureBuff(NewBuff b)
+        {
+            if (b != null)
+            {
+                InteractionBuff captureBuff = (InteractionBuff)b;
+                captureBuff.SetObject(this);
+            }
+
+            else
+                CapturingPlayer = null;
+        }
+
+        public virtual void NotifyInteractionBroken(NewBuff b)
+        {
+            if (CapturingPlayer == b.Target)
+                CapturingPlayer = null;
+        }
+
+        public virtual void NotifyInteractionComplete(NewBuff b)
+        {
+            CapturingPlayer = null;
         }
 
         #endregion

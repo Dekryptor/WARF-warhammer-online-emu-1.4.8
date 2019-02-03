@@ -1,1050 +1,374 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.IO;
 using System.Reflection;
-
+using System.Threading;
+using SystemData;
 using Common;
 using FrameWork;
+using GameData;
+using Common.Database.World.Battlefront;
+using WorldServer.World.Battlefronts.Keeps;
+using WorldServer.Scenarios;
+using WorldServer.Services.World;
+using Common.Database.World.Maps;
+using NLog;
+using WorldServer.World.Battlefronts;
+using WorldServer.World.Battlefronts.NewDawn;
 
 namespace WorldServer
 {
-    static public class WorldMgr
+    [Service(
+        typeof(AnnounceService),
+        typeof(BattlefrontService),
+        typeof(CellSpawnService),
+        typeof(ChapterService),
+        typeof(CreatureService),
+        typeof(DyeService),
+        typeof(GameObjectService),
+        typeof(GuildService),
+        typeof(ItemService),
+        typeof(PQuestService),
+        typeof(QuestService),
+        typeof(RallyPointService),
+        typeof(ScenarioService),
+        typeof(TokService),
+        typeof(VendorService),
+        typeof(WaypointService),
+        typeof(XpRenownService),
+        typeof(ZoneService))]
+    public static class WorldMgr
     {
-        static public MySQLObjectDatabase Database;
-        static public bool FastLoading = false;
+        public static IObjectDatabase Database;
+        private static Thread _worldThread;
+        private static Thread _groupThread;
+        private static bool _running = true;
+        public static long StartingPairing;
+
+        public static UpperTierBattlefrontManager UpperTierBattlefrontManager;
+        public static LowerTierBattlefrontManager LowerTierBattlefrontManager;
+        private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
+
+        //Log.Success("StartingPairing: ", StartingPairing.ToString());
+
+        #region Region
+
+        public static List<RegionMgr> _Regions = new List<RegionMgr>();
+        private static ReaderWriterLockSlim RegionsRWLock = new ReaderWriterLockSlim();
+        
+
+        public static RegionMgr GetRegion(ushort RegionId, bool Create)
+        {
+            RegionsRWLock.EnterReadLock();
+            RegionMgr Mgr = _Regions.Find(region => region != null && region.RegionId == RegionId);
+            RegionsRWLock.ExitReadLock();
+
+            if (Mgr == null && Create)
+            {
+                Mgr = new RegionMgr(RegionId, ZoneService.GetZoneRegion(RegionId));
+                RegionsRWLock.EnterWriteLock();
+                _Regions.Add(Mgr);
+                RegionsRWLock.ExitWriteLock();
+            }
+
+            return Mgr;
+        }
+
+        public static void Stop()
+        {
+            Log.Success("WorldMgr", "Stop");
+            foreach (RegionMgr Mgr in _Regions)
+                Mgr.Stop();
+
+            ScenarioMgr.Stop();
+            _running = false;
+
+        }
+
+
+        #endregion
 
         #region Zones
 
-        static public List<Zone_Info> _Zone_Info;
-        static public Dictionary<UInt32, Zone_jump> Zone_Jumps;
-
-        [LoadingFunction(true)]
-        static public void LoadZone_Info()
+        public static Zone_Respawn GetZoneRespawn(ushort zoneId, byte realm, Player player)
         {
-            Log.Debug("WorldMgr", "Loading Zone_Info...");
+            Zone_Respawn respawn = null;
 
-            _Zone_Info = Database.SelectAllObjects<Zone_Info>() as List<Zone_Info>;
+            if (player == null)
+                return ZoneService.GetZoneRespawn(zoneId, realm);
 
-            Log.Success("LoadZone_Info", "Loaded " + _Zone_Info.Count + " Zone_Info");
-
-            LoadZoneJumps();
-        }
-        static public Zone_Info GetZone_Info(UInt16 ZoneId)
-        {
-            return _Zone_Info.Find(zone => zone != null && zone.ZoneId == ZoneId);
-        }
-        static public List<Zone_Info> GetZoneRegion(UInt16 RegionId)
-        {
-            return _Zone_Info.FindAll(zone => zone != null && zone.Region == RegionId);
-        }
-        static public Zone_Info GetZoneFromOffsets(int OffsetX, int OffsetY)
-        {
-            foreach (Zone_Info Info in _Zone_Info)
+            if (player.CurrentArea != null)
             {
-                if (OffsetX >= Info.OffX && OffsetX < Info.OffX + 16
-                    && OffsetY >= Info.OffY && OffsetY < Info.OffY + 16)
+                ushort respawnId = realm == 1
+                    ? player.CurrentArea.OrderRespawnId
+                    : player.CurrentArea.DestroRespawnId;
+
+                #region Public Quest and Instances Respawns
+
+                List<Zone_Respawn> resps = new List<Zone_Respawn>();
+
+                if (player.ZoneId == 60 && player.QtsInterface.PublicQuest == null)
                 {
-                    return Info;
+                    resps = ZoneService.GetZoneRespawns(zoneId);
+                    foreach (Zone_Respawn res in resps)
+                        if (res.ZoneID == 60 && (res.RespawnID == 308 || res.RespawnID == 321))
+                            return res;
+                }
+
+                if (player.QtsInterface.PublicQuest != null)
+                {
+                    resps = ZoneService.GetZoneRespawns(zoneId);
+                    foreach (Zone_Respawn res in resps)
+                        if (res.Realm == 0 && res.ZoneID == zoneId && res.RespawnID == player.QtsInterface.PublicQuest.Info.RespawnID)
+                            return res;
+                }
+
+                #endregion
+
+                if (respawnId > 0)
+                {
+                    Zone_Respawn resp = ZoneService.GetZoneRespawn(respawnId);
+
+                    if (!player.CurrentArea.IsRvR)
+                        return resp;
+
+                    #region RvR area respawns
+                    var front = player.Region.ndbf;
+
+                    if (front != null)
+                    {
+                        var bestDist =
+                            player.GetDistanceToWorldPoint(
+                                ZoneService.GetWorldPosition(ZoneService.GetZone_Info((ushort)resp.ZoneID), resp.PinX, resp.PinY, resp.PinZ));
+
+                        foreach (var keep in front.Keeps)
+                        {
+                            if (keep == null || keep.Zone == null || keep.Info == null)
+                            {
+                                Log.Error("GetZoneRespawn", "Null required Keep information");
+                                continue;
+                            }
+
+                            if (keep.Realm == player.Realm &&
+                                (keep.KeepStatus == KeepStatus.KEEPSTATUS_SAFE ||
+                                 keep.KeepStatus == KeepStatus.KEEPSTATUS_OUTER_WALLS_UNDER_ATTACK))
+                            {
+                                var dist = player.GetDistanceToWorldPoint(keep.WorldPosition);
+                                if (dist < bestDist)
+                                {
+                                    resp = new Zone_Respawn
+                                    {
+                                        ZoneID = keep.Zone.ZoneId,
+                                        PinX = ZoneService.CalculPin(keep.Zone.Info, keep.Info.X, true),
+                                        PinY = ZoneService.CalculPin(keep.Zone.Info, keep.Info.Y, false),
+                                        PinZ = (ushort)keep.Info.Z
+                                    };
+                                    bestDist = dist;
+                                }
+                            }
+                        }
+
+                        return resp;
+                    }
+
+                    #endregion
                 }
             }
 
-            return null;
-        }
-
-        static public void LoadZoneJumps()
-        {
-            Log.Debug("WorldMgr", "Loading Zone_Info...");
-
-            Zone_Jumps = new Dictionary<uint, Zone_jump>();
-            List<Zone_jump> Jumps = Database.SelectAllObjects<Zone_jump>() as List<Zone_jump>;
-
-            foreach (Zone_jump Jump in Jumps)
+            List<Zone_Respawn> respawns = ZoneService.GetZoneRespawns(zoneId);
+            if (zoneId == 110)
+                respawns = ZoneService.GetZoneRespawns(109);
+            if (zoneId == 104)
+                respawns = ZoneService.GetZoneRespawns(103);
+            if (zoneId == 210)
+                respawns = ZoneService.GetZoneRespawns(209);
+            if (zoneId == 204)
+                respawns = ZoneService.GetZoneRespawns(203);
+            if (zoneId == 220)
+                respawns = ZoneService.GetZoneRespawns(205);
+            if (zoneId == 10)
+                respawns = ZoneService.GetZoneRespawns(9);
+            if (zoneId == 4)
+                respawns = ZoneService.GetZoneRespawns(3);
+            if (respawns != null)
             {
-                Jump.ZoneInfo = GetZone_Info(Jump.ZoneId);
-
-                if (Jump.ZoneInfo != null && !Zone_Jumps.ContainsKey(Jump.Entry))
+                if (player.ScnInterface.Scenario != null)
                 {
-                    Zone_Jumps.Add(Jump.Entry, Jump);
-                }
-                else
-                    Log.Error("Zone_Jumps", "Invalid Jump : " + Jump.Entry + ",Zone="+Jump.ZoneId);
-            }
+                    #region Scenario Spawns
 
-            Log.Success("LoadZone_Info", "Loaded " + _Zone_Info.Count + " Zone_Info");
-        }
+                    List<Zone_Respawn> options = new List<Zone_Respawn>();
 
-        static public Zone_jump GetZoneJump(UInt32 Entry)
-        {
-            Zone_jump jump;
-            Zone_Jumps.TryGetValue(Entry, out jump);
-            return jump;
-        }
+                    foreach (Zone_Respawn res in respawns)
+                    {
+                        if (res.Realm != realm)
+                            continue;
 
+                        options.Add(res);
+                    }
 
-        static public Dictionary<int, List<Zone_Area>> _Zone_Area;
+                    return options.Count == 1 ? options[0] : options[StaticRandom.Instance.Next(options.Count)];
 
-        [LoadingFunction(true)]
-        static public void LoadZone_Area()
-        {
-            Log.Debug("WorldMgr", "Loading Zone_Area...");
-            int PieceInformation = 0;
-
-            _Zone_Area = new Dictionary<int, List<Zone_Area>>();
-            IList<Zone_Area> Infos = Database.SelectAllObjects<Zone_Area>();
-            foreach (Zone_Area Area in Infos)
-            {
-                AddZoneArea(Area);
-            }
-
-            Log.Success("LoadZone_Info", "Loaded " + Infos.Count + " Zone_Area && " + PieceInformation + " Piece Informations");
-        }
-
-        static public void AddZoneArea(Zone_Area Area)
-        {
-            List<Zone_Area> Areas;
-            if (!_Zone_Area.TryGetValue(Area.ZoneId, out Areas))
-            {
-                Areas = new List<Zone_Area>();
-                _Zone_Area.Add(Area.ZoneId, Areas);
-            }
-
-            Areas.Add(Area);
-        }
-
-        static public List<Zone_Area> GetZoneAreas(ushort ZoneID)
-        {
-            List<Zone_Area> Areas;
-            if (!_Zone_Area.TryGetValue(ZoneID, out Areas))
-                return new List<Zone_Area>();
-            else
-                return Areas;
-        }
-
-        static public Dictionary<int, List<Zone_Respawn>> _Zone_Respawn;
-
-        [LoadingFunction(true)]
-        static public void LoadZone_Respawn()
-        {
-            Log.Debug("WorldMgr", "Loading LoadZone_Respawn...");
-
-            _Zone_Respawn = new Dictionary<int, List<Zone_Respawn>>();
-
-            IList<Zone_Respawn> Respawns = Database.SelectAllObjects<Zone_Respawn>();
-            foreach (Zone_Respawn Respawn in Respawns)
-            {
-                List<Zone_Respawn> L;
-                if (!_Zone_Respawn.TryGetValue(Respawn.ZoneID, out L))
-                {
-                    L = new List<Zone_Respawn>();
-                    _Zone_Respawn.Add(Respawn.ZoneID, L);
+                    #endregion
                 }
 
-                L.Add(Respawn);
-            }
+                #region World Spawns
 
-            Log.Success("LoadZone_Info", "Loaded " + Respawns.Count + " Zone_Respawn");
-        }
+                float lastDistance = float.MaxValue;
 
-        static public Zone_Respawn GetZoneRespawn(UInt16 ZoneID, byte Realm, Point3D PinPosition)
-        {
-            Zone_Respawn Respawn = null;
-            List<Zone_Respawn> Respawns;
-
-            if (_Zone_Respawn.TryGetValue(ZoneID, out Respawns))
-            {
-                float LastDistance = float.MaxValue;
-
-                foreach (Zone_Respawn Res in Respawns)
+                foreach (Zone_Respawn res in respawns)
                 {
-                    if (Res.Realm != Realm)
+                    if (res.Realm != realm)
                         continue;
 
-                    Point3D Pos = new Point3D(Res.PinX, Res.PinY, Res.PinZ);
-                    float Distance = Pos.GetDistance(PinPosition);
+                    var pos = new Point3D(res.PinX, res.PinY, res.PinZ);
+                    float distance = pos.GetDistance(player);
 
-                    if (Distance < LastDistance)
+                    if (distance < lastDistance)
                     {
-                        LastDistance = Distance;
-                        Respawn = Res;
+                        lastDistance = distance;
+                        respawn = res;
                     }
                 }
+
+                #endregion
             }
+
             else
-                Log.Error("WorldMgr", "Zone Respawn not found for : " + ZoneID);
+                Log.Error("WorldMgr", "Zone Respawn not found for : " + zoneId);
 
-            return Respawn;
+            return respawn;
         }
 
-
-        static public Dictionary<UInt16, Zone_Taxi[]> _Zone_Taxi = new Dictionary<UInt16, Zone_Taxi[]>();
-
-        [LoadingFunction(true)]
-        static public void LoadZone_Taxi()
-        {
-            Log.Debug("LoadZone_Info", "Loading Zone_Taxis...");
-
-            IList<Zone_Taxi> Taxis = Database.SelectAllObjects<Zone_Taxi>();
-            _Zone_Taxi = new Dictionary<UInt16, Zone_Taxi[]>();
-
-            foreach (Zone_Taxi Taxi in Taxis)
-            {
-                Zone_Taxi[] Tax;
-                if(!_Zone_Taxi.TryGetValue(Taxi.ZoneID,out Tax))
-                {
-                    Tax = new Zone_Taxi[(int)(GameData.Realms.REALMS_NUM_REALMS) + 1];
-                    _Zone_Taxi.Add(Taxi.ZoneID,Tax);
-                }
-                 
-                _Zone_Taxi[Taxi.ZoneID][Taxi.RealmID]= Taxi;
-            }
-
-            Log.Success("LoadZone_Info", "Loaded " + Taxis.Count + " Zone_Taxis");
-        }
-
-        static public Zone_Taxi GetZoneTaxi(UInt16 ZoneId, byte Realm)
-        {
-            Zone_Taxi[] Taxis;
-            if (_Zone_Taxi.TryGetValue(ZoneId, out Taxis))
-                return Taxis[Realm];
-
-            return null;
-        }
-
-        static public List<Zone_Taxi> GetTaxis(Player Plr)
+        public static List<Zone_Taxi> GetTaxis(Player Plr)
         {
             List<Zone_Taxi> L = new List<Zone_Taxi>();
 
             Zone_Taxi[] Taxis;
-            foreach (KeyValuePair<ushort,Zone_Taxi[]> Kp in WorldMgr._Zone_Taxi)
+            foreach (KeyValuePair<ushort, Zone_Taxi[]> Kp in ZoneService._Zone_Taxi)
             {
                 Taxis = Kp.Value;
                 if (Taxis[(byte)Plr.Realm] == null || Taxis[(byte)Plr.Realm].WorldX == 0)
                     continue;
 
-                if(Taxis[(byte)Plr.Realm].Info == null)
-                    Taxis[(byte)Plr.Realm].Info = WorldMgr.GetZone_Info(Taxis[(byte)Plr.Realm].ZoneID);
-                
+                if (Taxis[(byte)Plr.Realm].Info == null)
+                    Taxis[(byte)Plr.Realm].Info = ZoneService.GetZone_Info(Taxis[(byte)Plr.Realm].ZoneID);
+
                 if (Taxis[(byte)Plr.Realm].Info == null)
                     continue;
 
+                if (Taxis[(byte)Plr.Realm].Enable == false)
+                    continue;
+
+                if (Taxis[(byte)Plr.Realm].Tier > 0)
+                {
+                    switch (Taxis[(byte)Plr.Realm].Tier)
+                    {
+                        case 2:
+                            if (!(Plr.TokInterface.HasTok(11) || Plr.TokInterface.HasTok(44) || Plr.TokInterface.HasTok(75) || Plr.TokInterface.HasTok(140) || Plr.TokInterface.HasTok(171) || Plr.TokInterface.HasTok(107)))
+                                continue;
+                            break;
+                        case 3:
+                            if (!(Plr.TokInterface.HasTok(12) || Plr.TokInterface.HasTok(50) || Plr.TokInterface.HasTok(81) || Plr.TokInterface.HasTok(108) || Plr.TokInterface.HasTok(146) || Plr.TokInterface.HasTok(177)))
+                                continue;
+                            break;
+                        case 4:
+                            if (!(Plr.TokInterface.HasTok(18) || Plr.TokInterface.HasTok(55) || Plr.TokInterface.HasTok(86) || Plr.TokInterface.HasTok(114) || Plr.TokInterface.HasTok(182) || Plr.TokInterface.HasTok(151)))
+                                continue;
+                            break;
+                    }
+                }
                 L.Add(Taxis[(byte)Plr.Realm]);
             }
 
             return L;
         }
-
         #endregion
 
-        #region Chapters
+        #region Xp / Renown
 
-        static public Dictionary<uint, Chapter_Info> _Chapters;
-
-        [LoadingFunction(true)]
-        static public void LoadChapter_Infos()
+        public static uint GenerateXPCount(Player plr, Unit victim)
         {
-            Log.Debug("WorldMgr", "Loading Chapter_Infos...");
-
-            _Chapters = new Dictionary<uint, Chapter_Info>();
-
-            IList<Chapter_Info> IChapters = Database.SelectAllObjects<Chapter_Info>();
-
-            if(IChapters != null)
-            {
-                foreach (Chapter_Info Info in IChapters)
-                    if (!_Chapters.ContainsKey(Info.Entry))
-                        _Chapters.Add(Info.Entry, Info);
-            }
-
-            Log.Success("LoadChapter_Infos", "Loaded " + _Chapters.Count + " Chapter_Infos");
-        }
-        static public Chapter_Info GetChapter(uint Entry)
-        {
-            Chapter_Info Info = null;
-            _Chapters.TryGetValue(Entry, out Info);
-
-            return Info;
-        }
-        static public List<Chapter_Info> GetChapters(ushort ZoneId)
-        {
-            List<Chapter_Info> Chapters = new List<Chapter_Info>();
-
-            foreach (KeyValuePair<uint,Chapter_Info> Kp in _Chapters)
-                if (Kp.Value.ZoneId == ZoneId)
-                    Chapters.Add(Kp.Value);
-
-            return Chapters;
-        }
-
-        static public Dictionary<uint, List<Chapter_Reward>> _Chapters_Reward;
-
-        [LoadingFunction(true)]
-        static public void LoadChapter_Rewards()
-        {
-            Log.Debug("WorldMgr", "Loading LoadChapter_Rewards...");
-
-            _Chapters_Reward = new Dictionary<uint, List<Chapter_Reward>>();
-            IList<Chapter_Reward> Rewards = Database.SelectAllObjects<Chapter_Reward>();
-
-            foreach (Chapter_Reward Reward in Rewards)
-            {
-                if (!_Chapters_Reward.ContainsKey(Reward.Entry))
-                    _Chapters_Reward.Add(Reward.Entry, new List<Chapter_Reward>());
-
-                _Chapters_Reward[Reward.Entry].Add(Reward);
-            }
-
-            Log.Success("LoadChapter_Infos", "Loaded " + Rewards.Count + " Chapter_Rewards");
-        }
-
-        #endregion
-
-        #region Public Quests
-
-        static public Dictionary<uint, PQuest_Info> _PQuests;
-
-        [LoadingFunction(true)]
-        static public void LoadPQuest_Info()
-        {
-            _PQuests = new Dictionary<uint, PQuest_Info>();
-
-            IList<PQuest_Info> PQuests = Database.SelectObjects<PQuest_Info>("PinX != 0 AND PinY != 0");
-
-            foreach (PQuest_Info Info in PQuests)
-            {
-                _PQuests.Add(Info.Entry, Info);
-            }
-
-            Log.Success("WorldMgr", "Loaded " + _PQuests.Count + " Public Quests Info");
-        }
-
-        static public Dictionary<uint, List<PQuest_Objective>> _PQuest_Objectives;
-
-        [LoadingFunction(true)]
-        static public void LoadPQuest_Objective()
-        {
-            _PQuest_Objectives = new Dictionary<uint, List<PQuest_Objective>>();
-
-            IList<PQuest_Objective> PObjectives = Database.SelectObjects<PQuest_Objective>("Type != 0");
-
-            foreach (PQuest_Objective Obj in PObjectives)
-            {
-                List<PQuest_Objective> Objs;
-                if (!_PQuest_Objectives.TryGetValue(Obj.Entry, out Objs))
-                {
-                    Objs = new List<PQuest_Objective>();
-                    _PQuest_Objectives.Add(Obj.Entry, Objs);
-                }
-
-                Objs.Add(Obj);
-            }
-
-            Log.Success("WorldMgr", "Loaded " + PObjectives.Count + " Public Quest Objectives");
-        }
-
-        static public void GeneratePQuestObjective(PQuest_Objective Obj, PQuest_Info Q)
-        {
-            switch ((Objective_Type)Obj.Type)
-            {
-                case Objective_Type.QUEST_KILL_PLAYERS:
-                    {
-                        if (Obj.Description.Length < 1)
-                            Obj.Description = "Enemy Players";
-                    } break;
-
-                case Objective_Type.QUEST_SPEACK_TO:
-                    goto case Objective_Type.QUEST_KILL_MOB;
-
-                case Objective_Type.QUEST_KILL_MOB:
-                    {
-                        uint ObjID = 0;
-                        uint.TryParse(Obj.ObjectId, out ObjID);
-
-                        if (ObjID != 0)
-                            Obj.Creature = GetCreatureProto(ObjID);
-
-                        if (Obj.Description.Length < 1 && Obj.Creature != null)
-                            Obj.Description = Obj.Creature.Name;
-                    } break;
-
-                case Objective_Type.QUEST_GET_ITEM:
-                    {
-                        uint ObjID = 0;
-                        uint.TryParse(Obj.ObjectId, out ObjID);
-
-                        if (ObjID != 0)
-                            Obj.Item = GetItem_Info(ObjID);
-                    }
-                    break;
-            };
-        }
-
-        #endregion
-
-        #region Toks
-
-        static public Dictionary<ushort, Tok_Info> _Toks;
-        static public List<Tok_Info> DiscoveringToks;
-
-        [LoadingFunction(true)]
-        static public void LoadTok_Infos()
-        {
-            Log.Debug("WorldMgr", "Loading LoadTok_Infos...");
-
-            _Toks = new Dictionary<ushort, Tok_Info>();
-
-            IList<Tok_Info> IToks = Database.SelectAllObjects<Tok_Info>();
-            DiscoveringToks = new List<Tok_Info>();
-
-            if (IToks != null)
-            {
-                foreach (Tok_Info Info in IToks)
-                {
-                    _Toks.Add(Info.Entry, Info);
-                    if (Info.EventName.Contains("discovered") || Info.EventName.Contains("unlocked"))
-                    {
-                        DiscoveringToks.Add(Info);
-                    }
-                }
-            }
-
-            Log.Success("LoadTok_Infos", "Loaded " + _Toks.Count + " Tok_Infos");
-        }
-        static public Tok_Info GetTok(ushort Entry)
-        {
-            if (_Toks.ContainsKey(Entry))
-                return _Toks[Entry];
-
-            return null;
-        }
-      
-        #endregion
-
-        #region Item_Info
-
-        static public Dictionary<uint, Item_Info> _Item_Info;
-
-        [LoadingFunction(true)]
-        static public void LoadItem_Info()
-        {
-            Log.Debug("WorldMgr", "Loading Item_Info...");
-
-            _Item_Info = new Dictionary<uint, Item_Info>(100000);
-            int i;
-
-            List<Item_Info> Items = Database.SelectAllObjects<Item_Info>() as List<Item_Info>;
-            foreach (Item_Info Info in Items)
-            {
-                foreach (KeyValuePair<byte, ushort> Kp in Info._Stats)
-                {
-                    if (Kp.Key >= byte.MaxValue || Kp.Value >= ushort.MaxValue)
-                    {
-                        Info.Stats = "";
-                        Info.SellPrice = 0;
-                        Info._Stats.Clear();
-                        break;
-                    }
-                }
-                foreach (KeyValuePair<uint, uint> Kp in Info._Spells)
-                {
-                    if (Kp.Key >= uint.MaxValue || Kp.Value >= uint.MaxValue)
-                    {
-                        Info.Spells = "";
-                        Info.SellPrice = 0;
-                        Info._Spells.Clear();
-                        break;
-                    }
-                }
-
-                foreach (KeyValuePair<byte, ushort> Kp in Info._Crafts)
-                {
-                    if (Kp.Key >= byte.MaxValue || Kp.Value >= ushort.MaxValue)
-                    {
-                        Info.Crafts = "";
-                        Info.SellPrice = 0;
-                        Info._Crafts.Clear();
-                        break;
-                    }
-                }
-
-                if (Info.Speed != 0 && Info.Dps == 0)
-                {
-                    Info.SellPrice = 0;
-                    Info.Speed = 0;
-                }
-                else if (Info.Dps != 0 && Info.Speed == 0)
-                {
-                    Info.Dps = 0;
-                    Info.SellPrice = 0;
-                }
-
-                if (Info.Unk27[4] != 3 || Info.Unk27[5] != 2)
-                {
-                    for (i = 0; i < Info.Unk27.Length; ++i)
-                    {
-                        Info.Unk27[i] = 0;
-                    }
-
-                    Info.Unk27[4] = 3;
-                    Info.Unk27[5] = 2;
-                }
-
-                _Item_Info.Add(Info.Entry, Info);
-            }
-
-            Log.Success("LoadItem_Info", "Loaded " + _Item_Info.Count + " Item_Info");
-
-            foreach (Item_Info Info in Items)
-            {
-                Info.RequiredItems = new List<KeyValuePair<Item_Info, ushort>>(Info._SellRequiredItems.Count);
-                foreach (KeyValuePair<UInt32, UInt16> Kp in Info._SellRequiredItems)
-                {
-                    Info.RequiredItems.Add(new KeyValuePair<Item_Info, ushort>(GetItem_Info(Kp.Key), Kp.Value));
-                }
-            }
-        }
-
-        static public Item_Info GetItem_Info(uint Entry)
-        {
-            if (_Item_Info.ContainsKey(Entry))
-                return _Item_Info[Entry];
-            return null;
-        }
-
-        #endregion
-
-        #region Region
-
-        static public List<RegionMgr> _Regions = new List<RegionMgr>();
-
-        static public RegionMgr GetRegion(UInt16 RegionId,bool Create)
-        {
-            lock (_Regions)
-            {
-                RegionMgr Mgr = _Regions.Find(region => region != null && region.RegionId == RegionId);
-                if (Mgr == null && Create)
-                {
-                    Mgr = new RegionMgr(RegionId, GetZoneRegion(RegionId));
-                    _Regions.Add(Mgr);
-                }
-
-                return Mgr;
-            }
-        }
-
-        static public void Stop()
-        {
-            Log.Success("WorldMgr", "Stop");
-            foreach (RegionMgr Mgr in _Regions)
-                Mgr.Stop();
-        }
-
-        #endregion
-
-        #region Xp
-
-        static private Dictionary<byte, Xp_Info> _Xp_Infos;
-
-        [LoadingFunction(true)]
-        static public void LoadXp_Info()
-        {
-            Log.Debug("WorldMgr", "Loading Xp_Infos...");
-
-            _Xp_Infos = new Dictionary<byte, Xp_Info>();
-            IList<Xp_Info> Infos = Database.SelectAllObjects<Xp_Info>();
-            foreach (Xp_Info Info in Infos)
-                _Xp_Infos.Add(Info.Level, Info);
-
-            Log.Success("LoadXp_Info", "Loaded " + _Xp_Infos.Count + " Xp_Infos");
-        }
-
-        static public Xp_Info GetXp_Info(byte Level)
-        {
-            if (_Xp_Infos.ContainsKey(Level))
-                return _Xp_Infos[Level];
-            else return null;
-        }
-
-        static public uint GenerateXPCount(Player Plr, Unit Victim)
-        {
-            UInt32 KLvl = Plr.Level;
-            UInt32 VLvl = Victim.Level;
+            uint KLvl = plr.AdjustedLevel;
+            uint VLvl = victim.AdjustedLevel;
 
             if (KLvl > VLvl + 8)
                 return 0;
 
-            UInt32 XP = (VLvl+1) * 70;
-            XP += (UInt32)Victim.Rank * 50;
+            uint XP = VLvl * 70;
+
+            if (victim is Creature)
+            {
+                switch (victim.Rank)
+                {
+                    case 1:
+                        XP *= 2; break;
+                    case 2:
+                        if (plr.WorldGroup != null)
+                            XP *= 8;
+                        break;
+                }
+            }
 
             if (KLvl > VLvl)
-                XP -= (UInt32)(((float)XP / (float)100) * (KLvl - VLvl + 1)) * 5;
+                XP -= (uint)((XP / (float)100) * (KLvl - VLvl + 1)) * 5;
 
             if (Program.Config.XpRate > 0)
-                XP *= (UInt32)Program.Config.XpRate;
+                XP *= (uint)Program.Config.XpRate;
 
             return XP;
         }
 
-        static public void GenerateXP(Unit Killer, Unit Victim)
+        public static void GenerateXP(Player killer, Unit victim, float bonusMod)
         {
-            if (Killer.IsPlayer())
-            {
-                Player Plr = Killer.GetPlayer();
+            if (killer == null) return;
 
-                if (!Plr.GrpInterface.IsInGroup())
-                    Plr.AddXp(GenerateXPCount(Plr, Victim));
-                else
-                    Plr.GrpInterface.CurrentGroup.AddXp(Plr, Victim);
-            }
+            if (killer.Level != killer.EffectiveLevel)
+                bonusMod = 0.0f;
+
+            if (killer.PriorityGroup == null)
+                killer.AddXp((uint)(GenerateXPCount(killer, victim) * bonusMod), true, true);
+            else
+                killer.PriorityGroup.AddXpFromKill(killer, victim, bonusMod);
         }
-
-        #endregion
-
-        #region Renown_Info
-
-        static private Dictionary<byte, Renown_Info> _Renown_Infos;
-
-        [LoadingFunction(true)]
-        static public void LoadRenown_Info()
+        
+        public static uint GenerateRenownCount(Player killer, Player victim)
         {
-            Log.Debug("WorldMgr", "Loading Renown_Info...");
-
-            _Renown_Infos = new Dictionary<byte, Renown_Info>();
-            foreach (Renown_Info Info in Database.SelectAllObjects<Renown_Info>())
-                _Renown_Infos.Add(Info.Level, Info);
-
-            Log.Success("LoadRenown_Info", "Loaded " + _Renown_Infos.Count + " Renown_Info");
-        }
-
-        static public Renown_Info GetRenown_Info(byte Level)
-        {
-            if (_Renown_Infos.ContainsKey(Level))
-                return _Renown_Infos[Level];
-            else return null;
-        }
-
-        static public uint GenerateRenownCount(Player Killer, Player Victim)
-        {
-            if (Killer == null || Victim == null || Killer == Victim)
+            if (killer == null || victim == null || killer == victim)
                 return 0;
 
-            UInt32 VRp = Victim._Value.RenownRank;
-            UInt32 VLvl = Victim.Level;
+            uint renownPoints = (uint)(7.31f * (victim.AdjustedRenown + victim.AdjustedLevel));
 
-            UInt32 RP = VRp * 4 + VLvl * 6;
+            if (killer.AdjustedLevel > 15 && killer.AdjustedLevel < 31)
+                renownPoints = (uint)(renownPoints * 1.5f);
 
-            if (Program.Config.RenownRate > 0)
-                RP *= (UInt32)Program.Config.RenownRate;
-
-            return RP;
-        }
-
-        static public void GenerateRenown(Player Killer, Player Victim)
-        {
-            if (Killer == null || Victim == null || Killer == Victim)
-                return;
-
-            if (!Killer.GrpInterface.IsInGroup())
-                Killer.AddRenown(GenerateRenownCount(Killer, Victim));
-            else
-                Killer.GrpInterface.CurrentGroup.AddRenown(Killer, Victim);
+            return renownPoints;
         }
 
         #endregion
-
-        #region CreatureProto
-
-        static public Dictionary<uint, Creature_proto> CreatureProtos;
-
-        [LoadingFunction(true)]
-        static public void LoadCreatureProto()
-        {
-            Log.Debug("WorldMgr", "Loading Creature_Protos...");
-
-            CreatureProtos = new Dictionary<uint, Creature_proto>();
-
-            if (FastLoading)
-                return;
-
-           IList<Creature_proto> Protos = Database.SelectAllObjects<Creature_proto>();
-
-           if (Protos != null)
-               foreach (Creature_proto Proto in Protos)
-               {
-                   if(Proto.Model1 == 0 && Proto.Model2 == 0)
-                        Proto.Model1 = Proto.Model2 = 1;
-
-                   if (Proto.MinLevel == Proto.MaxLevel && Proto.MinLevel > 1)
-                       Proto.MaxLevel = (byte)(Proto.MinLevel + 1);
-                   else if (Proto.MaxLevel - Proto.MinLevel > 3)
-                       Proto.MaxLevel = (byte)(Proto.MinLevel + 2);
-
-                   CreatureProtos.Add(Proto.Entry, Proto);
-               }
-
-           Log.Success("LoadCreatureProto", "Loaded " + CreatureProtos.Count + " Creature_Protos");
-        }
-
-        static public Creature_proto GetCreatureProto(uint Entry)
-        {
-            Creature_proto Proto;
-            CreatureProtos.TryGetValue(Entry, out Proto);
-            return Proto;
-        }
-
-        static public Creature_proto GetCreatureProtoByName(string Name)
-        {
-            foreach (KeyValuePair<uint, Creature_proto> Kp in CreatureProtos)
-                if (Kp.Value.Name.ToLower() == Name.ToLower())
-                    return Kp.Value;
-            return null;
-        }
-
-        #endregion
-
-        #region CreatureSpawns
-
-        static public Dictionary<uint, Creature_spawn> CreatureSpawns;
-        static public int MaxCreatureGUID = 0;
-
-        static public int GenerateCreatureSpawnGUID()
-        {
-            return System.Threading.Interlocked.Increment(ref MaxCreatureGUID);
-        }
-
-        [LoadingFunction(true)]
-        static public void LoadCreatureSpawns()
-        {
-            Log.Debug("WorldMgr", "Loading Creature_Spawns...");
-
-            CreatureSpawns = new Dictionary<uint, Creature_spawn>();
-            if (FastLoading)
-                return;
-
-            IList<Creature_spawn> Spawns = Database.SelectAllObjects<Creature_spawn>();
-
-            if(Spawns != null)
-                foreach (Creature_spawn Spawn in Spawns)
-                {
-                    CreatureSpawns.Add(Spawn.Guid, Spawn);
-                    if (Spawn.Guid > MaxCreatureGUID)
-                        MaxCreatureGUID = (int)Spawn.Guid;
-                }
-
-
-            Log.Success("LoadCreatureSpawns", "Loaded " + CreatureSpawns.Count + " Creature_Spawns");
-        }
-
-        #endregion
-
-        #region CreatureItems
-
-        static public Dictionary<uint, List<Creature_item>> _CreatureItems;
-
-        [LoadingFunction(true)]
-        static public void LoadCreatureItems()
-        {
-            Log.Debug("WorldMgr", "Loading Creature_Items...");
-
-            _CreatureItems = new Dictionary<uint, List<Creature_item>>();
-            if (FastLoading)
-                return;
-
-            IList<Creature_item> Items = Database.SelectAllObjects<Creature_item>();
-
-            if (Items != null)
-                foreach (Creature_item Item in Items)
-                {
-                    if (!_CreatureItems.ContainsKey(Item.Entry))
-                        _CreatureItems.Add(Item.Entry, new List<Creature_item>());
-
-                    _CreatureItems[Item.Entry].Add(Item);
-                }
-
-            Log.Success("LoadCreatureItems", "Loaded " + (Items != null ? Items.Count : 0) + " Creature_Items");
-        }
-
-        static public List<Creature_item> GetCreatureItems(uint Entry)
-        {
-            List<Creature_item> L;
-
-            lock (_CreatureItems)
-            {
-                if (!_CreatureItems.TryGetValue(Entry, out L))
-                {
-                    L = new List<Creature_item>();
-                    _CreatureItems.Add(Entry, L);
-                }
-            }
-
-            return L;
-        }
-
-        static public void RemoveCreatureItem(uint Entry, ushort Slot)
-        {
-            List<Creature_item> Items = GetCreatureItems(Entry);
-            Items.RemoveAll(info =>
-            {
-                if (info.SlotId == Slot)
-                {
-                    WorldMgr.Database.DeleteObject(info);
-                    return true;
-                }
-                return false;
-            });
-        }
-
-        static public void AddCreatureItem(Creature_item Item)
-        {
-            RemoveCreatureItem(Item.Entry, Item.SlotId);
-
-            List<Creature_item> Items = GetCreatureItems(Item.Entry);
-            Items.Add(Item);
-            Database.AddObject(Item);
-        }
-
-
-        #endregion
-
-        #region CreatureText
-
-        static public Dictionary<uint, List<Creature_text>> _CreatureTexts = new Dictionary<uint, List<Creature_text>>();
-
-        [LoadingFunction(true)]
-        static public void LoadCreatureTexts()
-        {
-            _CreatureTexts = new Dictionary<uint, List<Creature_text>>();
-
-            Log.Debug("WorldMgr", "Loading Creature_texts...");
-            if (FastLoading)
-                return;
-
-            IList<Creature_text> Texts = Database.SelectAllObjects<Creature_text>();
-
-            int Count = 0;
-            foreach (Creature_text Text in Texts)
-            {
-                if (!_CreatureTexts.ContainsKey(Text.Entry))
-                    _CreatureTexts.Add(Text.Entry, new List<Creature_text>());
-
-                _CreatureTexts[Text.Entry].Add(Text);
-                ++Count;
-            }
-
-            Log.Success("WorldMgr", "Loaded " + Count + " Creature Texts");
-        }
-
-        static public string GetCreatureText(uint Entry)
-        {
-            string Text = "";
-
-            if (_CreatureTexts.ContainsKey(Entry))
-            {
-                int RandomNum = RandomMgr.Next(_CreatureTexts[Entry].Count);
-                Text = _CreatureTexts[Entry][RandomNum].Text;
-            }
-
-            return Text;
-        }
-
-        #endregion
-
-        #region CreatureLoots
-
-        static public Dictionary<uint, List<Creature_loot>> _Creature_loots = new Dictionary<uint,List<Creature_loot>>();
-        static private void LoadLoots(uint Entry)
-        {
-            if (FastLoading)
-                return;
-
-            if (!_Creature_loots.ContainsKey(Entry))
-            {
-                Log.Debug("WorldMgr", "Loading Loots of " + Entry + " ...");
-
-                List<Creature_loot> Loots = new List<Creature_loot>();
-                IList<Creature_loot> ILoots = Database.SelectObjects<Creature_loot>("Entry=" + Entry);
-                foreach (Creature_loot Loot in ILoots)
-                    Loots.Add(Loot);
-
-                _Creature_loots.Add(Entry, Loots);
-
-                long MissingCreature = 0;
-                long MissingItemProto = 0;
-
-                if (GetCreatureProto(Entry) == null)
-                {
-                    Log.Debug("LoadLoots", "[" + Entry + "] Invalid Creature Proto");
-                    _Creature_loots.Remove(Entry);
-                    ++MissingCreature;
-                }
-
-                foreach (Creature_loot Loot in _Creature_loots[Entry].ToArray())
-                {
-                    Loot.Info = GetItem_Info(Loot.ItemId);
-
-                    if (Loot.Info == null)
-                    {
-                        Log.Debug("LoadLoots", "[" + Loot.ItemId + "] Invalid Item Info");
-                        _Creature_loots[Entry].Remove(Loot);
-                        ++MissingItemProto;
-                    }
-                }
-
-                if (MissingItemProto > 0)
-                    Log.Error("LoadLoots", "[" + MissingItemProto + "] Missing Item Info");
-
-                if (MissingCreature > 0)
-                    Log.Error("LoadLoots", "[" + MissingCreature + "] Misssing Creature proto");
-
-                //Log.Success("LoadCreatureLoots", "Loaded " + _Creature_loots[Entry].Count + " loots of : " + Entry);
-            }
-        }
-        static public List<Creature_loot> GetLoots(uint Entry)
-        {
-            LoadLoots(Entry);
-
-            List<Creature_loot> Loots;
-
-            if (!_Creature_loots.TryGetValue(Entry,out Loots))
-                Loots = new List<Creature_loot>();
-
-            return Loots;
-        }
-
-        #endregion
-
-        #region GameObjects
-
-        static public Dictionary<uint, GameObject_proto> GameObjectProtos;
-        static public Dictionary<uint, GameObject_spawn> GameObjectSpawns;
-        static public int MaxGameObjectGUID = 0;
-
-        static public int GenerateGameObjectSpawnGUID()
-        {
-            return System.Threading.Interlocked.Increment(ref MaxGameObjectGUID);
-        }
-
-        [LoadingFunction(true)]
-        static public void LoadGameObjectProtos()
-        {
-            Log.Debug("WorldMgr", "Loading GameObject_Protos...");
-
-            GameObjectProtos = new Dictionary<uint, GameObject_proto>();
-            if (FastLoading)
-                return;
-
-            IList<GameObject_proto> Protos = Database.SelectAllObjects<GameObject_proto>();
-
-            foreach (GameObject_proto Proto in Protos)
-                    GameObjectProtos.Add(Proto.Entry, Proto);
-
-            Log.Success("WorldMgr", "Loaded " + GameObjectProtos.Count + " GameObject_Protos");
-        }
-
-        static public GameObject_proto GetGameObjectProto(uint Entry)
-        {
-            GameObject_proto Proto;
-            GameObjectProtos.TryGetValue(Entry, out Proto);
-            return Proto;
-        }
-
-        [LoadingFunction(true)]
-        static public void LoadGameObjectSpawns()
-        {
-            Log.Debug("WorldMgr", "Loading GameObject_Spawns...");
-
-            GameObjectSpawns = new Dictionary<uint, GameObject_spawn>();
-            if (FastLoading)
-                return;
-
-            IList<GameObject_spawn> Spawns = Database.SelectAllObjects<GameObject_spawn>();
-
-            foreach (GameObject_spawn Spawn in Spawns)
-            {
-                GameObjectSpawns.Add(Spawn.Guid, Spawn);
-                if (Spawn.Guid > MaxGameObjectGUID)
-                    MaxGameObjectGUID = (int)Spawn.Guid;
-            }
-
-            Log.Success("WorldMgr", "Loaded " + GameObjectSpawns.Count + " GameObject_Spawns");
-        }
-
-        #endregion
-
+        
         #region Vendors
-
-        static public int MAX_ITEM_PAGE = 3;
-
-        static public Dictionary<uint, List<Creature_vendor>> _Vendors = new Dictionary<uint, List<Creature_vendor>>();
-        static public List<Creature_vendor> GetVendorItems(uint Entry)
-        {
-            if (FastLoading)
-                return new List<Creature_vendor>();
-
-            if (!_Vendors.ContainsKey(Entry))
-            {
-                Log.Info("WorldMgr", "Loading Vendors of " + Entry +" ...");
-
-                IList<Creature_vendor> IVendors = Database.SelectObjects<Creature_vendor>("Entry="+Entry);
-                List<Creature_vendor> Vendors = new List<Creature_vendor>();
-                Vendors.AddRange(IVendors);
-
-                _Vendors.Add(Entry, Vendors);
-
-                Item_Info Req;
-                foreach (Creature_vendor Info in Vendors.ToArray())
-                {
-                    if ((Info.Info = GetItem_Info(Info.ItemId)) == null)
-                    {
-                        Vendors.Remove(Info);
-                        continue;
-                    }
-
-                    foreach (KeyValuePair<uint, UInt16> Kp in Info.ItemsReq)
-                    {
-                        Req = GetItem_Info(Kp.Key);
-                        if (Req != null)
-                            Info.ItemsReqInfo.Add(Kp.Value, Req);
-                    }
-                }
-
-                Log.Success("LoadCreatureVendors", "Loaded " + Vendors.Count + " Vendors of " + Entry);
-            }
-
-            return _Vendors[Entry];
-        }
-
-        static public void SendVendor(Player Plr, uint Entry)
+        public static void SendVendor(Player Plr, ushort id)
         {
             if (Plr == null)
                 return;
 
-            List<Creature_vendor> Items = GetVendorItems(Entry).ToList();
+            //guildrank check
+            List<Vendor_items> Itemsprecheck = VendorService.GetVendorItems(id).ToList();
+            List<Vendor_items> Items = new List<Vendor_items>();
+
+            foreach(Vendor_items vi in Itemsprecheck)
+            {
+                if (vi.ReqGuildlvl > 0 && Plr.GldInterface.IsInGuild() && vi.ReqGuildlvl > Plr.GldInterface.Guild.Info.Level)
+                    continue;
+                Items.Add(vi);
+            }
+
+
             byte Page = 0;
             int Count = Items.Count;
             while (Count > 0)
             {
-                byte ToSend = (byte)Math.Min(Count, MAX_ITEM_PAGE);
+                byte ToSend = (byte)Math.Min(Count, VendorService.MAX_ITEM_PAGE);
                 if (ToSend <= Count)
                     Count -= ToSend;
                 else
@@ -1057,11 +381,11 @@ namespace WorldServer
 
             Plr.ItmInterface.SendBuyBack();
         }
-        static public void SendVendorPage(Player Plr, ref List<Creature_vendor> Vendors, byte Count,byte Page)
+        public static void SendVendorPage(Player Plr, ref List<Vendor_items> Vendors, byte Count, byte Page)
         {
             Count = (byte)Math.Min(Count, Vendors.Count);
 
-            PacketOut Out = new PacketOut((byte)Opcodes.F_INIT_STORE);
+            PacketOut Out = new PacketOut((byte)Opcodes.F_INIT_STORE, 256);
             Out.WriteByte(3);
             Out.WriteByte(0);
             Out.WriteByte(Page);
@@ -1070,7 +394,7 @@ namespace WorldServer
             Out.WriteByte(1);
             Out.WriteByte(0);
 
-            if(Page == 0)
+            if (Page == 0)
                 Out.WriteByte(0);
 
             for (byte i = 0; i < Count; ++i)
@@ -1078,17 +402,31 @@ namespace WorldServer
                 Out.WriteByte(i);
                 Out.WriteByte(1);
                 Out.WriteUInt32(Vendors[i].Price);
-                Item.BuildItem(ref Out, null, Vendors[i].Info, 0, 1);
+                Item.BuildItem(ref Out, null, Vendors[i].Info, null, 0, 1);
 
-                Out.WriteByte((byte)Vendors[i].ItemsReqInfo.Count); // ReqItemSize
-                foreach (KeyValuePair<UInt16, Item_Info> Kp in Vendors[i].ItemsReqInfo)
+                if (Plr != null && Plr.ItmInterface != null && Vendors[i].Info != null && Vendors[i].Info.ItemSet != 0)
+                    Plr.ItmInterface.SendItemSetInfoToPlayer(Plr, Vendors[i].Info.ItemSet);
+
+                if ((byte)Vendors[i].ItemsReq.Count > 0)
                 {
-                    Out.WriteUInt32(Kp.Value.Entry);
-                    Out.WriteUInt16((UInt16)Kp.Value.ModelId);
-                    Out.WritePascalString(Kp.Value.Name);
-                    Out.WriteUInt16(Kp.Key);
-                    Out.Fill(0, 18);
+                    Out.WriteByte(1);
+                    foreach (KeyValuePair<uint, ushort> Kp in Vendors[i].ItemsReq)
+                    {
+                        Item_Info item = ItemService.GetItem_Info(Kp.Key);
+                        Out.WriteUInt32(Kp.Key);
+                        Out.WriteUInt16((ushort)item.ModelId);
+                        Out.WritePascalString(item.Name);
+                        Out.WriteUInt16(Kp.Value);
+                    }
+
                 }
+                if ((byte)Vendors[i].ItemsReq.Count == 1)
+                    Out.Fill(0, 18);
+                else if ((byte)Vendors[i].ItemsReq.Count == 2)
+                    Out.Fill(0, 9);
+                else
+                    Out.Fill(0, 1);
+
             }
 
             Out.WriteByte(0);
@@ -1097,110 +435,87 @@ namespace WorldServer
             Vendors.RemoveRange(0, Count);
         }
 
-        static public void BuyItemVendor(Player Plr, InteractMenu Menu,uint Entry)
+        public static void BuyItemVendor(Player Plr, InteractMenu Menu, ushort id)
         {
-            int Num = (Menu.Page * MAX_ITEM_PAGE) + Menu.Num;            
-            ushort Count = (ushort)(Menu.Count > 0 ? Menu.Count : 1);
-            List<Creature_vendor> Vendors = GetVendorItems(Entry);
+            int Num = (Menu.Page * VendorService.MAX_ITEM_PAGE) + Menu.Num;
+            ushort Count = Menu.Packet.GetUint16();
+            if (Count == 0)
+                Count = 1;
+
+            //guildrank check
+            List<Vendor_items> Itemsprecheck = VendorService.GetVendorItems(id).ToList();
+            List<Vendor_items> Vendors = new List<Vendor_items>();
+
+            foreach (Vendor_items vi in Itemsprecheck)
+            {
+                if (vi.ReqGuildlvl > 0 && Plr.GldInterface.IsInGuild() && vi.ReqGuildlvl > Plr.GldInterface.Guild.Info.Level)
+                    continue;
+                Vendors.Add(vi);
+            }
 
             if (Vendors.Count <= Num)
                 return;
 
-            if (!Plr.HaveMoney((Vendors[Num].Price) * Count))
+            if (!Plr.HasMoney((Vendors[Num].Price) * Count))
             {
-                Plr.SendLocalizeString("", GameData.Localized_text.TEXT_MERCHANT_INSUFFICIENT_MONEY_TO_BUY);
+                Plr.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEXT_MERCHANT_INSUFFICIENT_MONEY_TO_BUY);
                 return;
             }
 
-            foreach (KeyValuePair<UInt16, Item_Info> Kp in Vendors[Num].ItemsReqInfo)
+            foreach (KeyValuePair<uint,ushort> Kp in Vendors[Num].ItemsReq)
             {
-                if (!Plr.ItmInterface.HasItemCount(Kp.Value.Entry, Kp.Key))
+                if (!Plr.ItmInterface.HasItemCountInInventory(Kp.Key, (ushort)(Kp.Value * Count)))
                 {
-                    Plr.SendLocalizeString("", GameData.Localized_text.TEXT_MERCHANT_FAIL_PURCHASE_REQUIREMENT);
+                    Plr.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEXT_MERCHANT_FAIL_PURCHASE_REQUIREMENT);
                     return;
                 }
             }
 
-            ItemError Error = Plr.ItmInterface.CreateItem(Vendors[Num].Info, Count);
-            if (Error == ItemError.RESULT_OK)
+            if (Vendors[Num].ReqTokUnlock > 0 && !Plr.TokInterface.HasTok(Vendors[Num].ReqTokUnlock))
+                return;
+
+            ItemResult result = Plr.ItmInterface.CreateItem(Vendors[Num].Info, Count);
+            if (result == ItemResult.RESULT_OK)
             {
-                Plr.RemoveMoney((Vendors[Num].Price) * Count);
-                foreach (KeyValuePair<UInt16, Item_Info> Kp in Vendors[Num].ItemsReqInfo)
-                    Plr.ItmInterface.RemoveItem(Kp.Value.Entry, Kp.Key);
+                Plr.RemoveMoney(Vendors[Num].Price * Count);
+                foreach (KeyValuePair<uint,ushort> Kp in Vendors[Num].ItemsReq)
+                    Plr.ItmInterface.RemoveItems(Kp.Key, (ushort)(Kp.Value * Count));
             }
-            else if (Error == ItemError.RESULT_MAX_BAG)
+            else if (result == ItemResult.RESULT_MAX_BAG)
             {
-                Plr.SendLocalizeString("", GameData.Localized_text.TEXT_MERCHANT_INSUFFICIENT_SPACE_TO_BUY);
+                Plr.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEXT_MERCHANT_INSUFFICIENT_SPACE_TO_BUY);
             }
-            else if (Error == ItemError.RESULT_ITEMID_INVALID)
+            else if (result == ItemResult.RESULT_ITEMID_INVALID)
             {
-                
+
             }
         }
-
         #endregion
-
+        
         #region Quests
-
-        static public Dictionary<ushort, Quest> _Quests;
-
-        [LoadingFunction(true)]
-        static public void LoadQuests()
-        {
-            _Quests = new Dictionary<ushort, Quest>();
-
-            IList<Quest> Quests = Database.SelectAllObjects<Quest>();
-
-            if (Quests != null)
-                foreach (Quest Q in Quests)
-                    _Quests.Add(Q.Entry, Q);
-
-            Log.Success("LoadQuests", "Loaded " + _Quests.Count + " Quests");
-        }
-        static public Quest GetQuest(ushort QuestID)
-        {
-            Quest Q;
-            _Quests.TryGetValue(QuestID, out Q);
-            return Q;
-        }
-
-        static public Dictionary<int, Quest_Objectives> _Objectives;
-
-        [LoadingFunction(true)]
-        static public void LoadQuestsObjectives()
-        {
-            _Objectives = new Dictionary<int, Quest_Objectives>();
-
-            IList<Quest_Objectives> Objectives = Database.SelectAllObjects<Quest_Objectives>();
-
-            if (Objectives != null)
-                foreach (Quest_Objectives Obj in Objectives)
-                    _Objectives.Add(Obj.Guid, Obj);
-
-            Log.Success("LoadQuestsObjectives", "Loaded " + _Objectives.Count + " Quests Objectives");
-        }
-
-        static public void GenerateObjectif(Quest_Objectives Obj, Quest Q)
+        // TODO move that to QuestService
+        public static void GenerateObjective(Quest_Objectives Obj, Quest Q)
         {
             switch ((Objective_Type)Obj.ObjType)
             {
                 case Objective_Type.QUEST_KILL_PLAYERS:
                     {
-                        if(Obj.Description.Length < 1)
+                        if (Obj.Description.Length < 1)
                             Obj.Description = "Enemy Players";
-                    }break;
+                    }
+                    break;
 
-                case Objective_Type.QUEST_SPEACK_TO:
+                case Objective_Type.QUEST_SPEAK_TO:
                     {
                         uint ObjID = 0;
                         uint.TryParse(Obj.ObjID, out ObjID);
 
-                        if(ObjID != 0)
-                            Obj.Creature = GetCreatureProto(ObjID);
+                        if (ObjID != 0)
+                            Obj.Creature = CreatureService.GetCreatureProto(ObjID);
 
                         if (Obj.Creature == null)
                         {
-                            Obj.Description = "Invalid Npc,plz report to GM. QuestID " + Obj.Entry + ",ObjId=" + Obj.ObjID;
+                            Obj.Description = "Invalid NPC - " + Obj.Entry + ",ObjId=" + Obj.ObjID;
                         }
                         else
                         {
@@ -1208,19 +523,41 @@ namespace WorldServer
                                 Obj.Description = "Speak to " + Obj.Creature.Name;
                         }
 
-                    } break;
+                    }
+                    break;
+
+                case Objective_Type.QUEST_USE_GO:
+                    {
+                        uint ObjID = 0;
+                        uint.TryParse(Obj.ObjID, out ObjID);
+
+                        if (ObjID != 0)
+                            Obj.GameObject = GameObjectService.GetGameObjectProto(ObjID);
+
+                        if (Obj.GameObject == null)
+                        {
+                            Obj.Description = "Invalid GameObject - QuestID " + Obj.Entry + ",ObjId=" + Obj.ObjID;
+                        }
+                        else
+                        {
+                            if (Obj.Description == null || Obj.Description.Length <= Obj.GameObject.Name.Length)
+                                Obj.Description = "Find " + Obj.GameObject.Name;
+                        }
+
+                    }
+                    break;
 
                 case Objective_Type.QUEST_KILL_MOB:
                     {
                         uint ObjID = 0;
                         uint.TryParse(Obj.ObjID, out ObjID);
 
-                        if(ObjID != 0)
-                            Obj.Creature = GetCreatureProto(ObjID);
+                        if (ObjID != 0)
+                            Obj.Creature = CreatureService.GetCreatureProto(ObjID);
 
                         if (Obj.Creature == null)
                         {
-                            Obj.Description = "Invalid Creature,plz report to GM. QuestID " + Obj.Entry + ",ObjId=" + Obj.ObjID;
+                            Obj.Description = "Invalid Creature - QuestID " + Obj.Entry + ",ObjId=" + Obj.ObjID;
                         }
                         else
                         {
@@ -1228,8 +565,31 @@ namespace WorldServer
                                 Obj.Description = "Kill " + Obj.Creature.Name;
                         }
 
-                    } break;
+                    }
+                    break;
 
+                case Objective_Type.QUEST_KILL_GO:
+                    {
+                        uint ObjID = 0;
+                        uint.TryParse(Obj.ObjID, out ObjID);
+
+                        if (ObjID != 0)
+                            Obj.GameObject = GameObjectService.GetGameObjectProto(ObjID);
+
+                        if (Obj.GameObject == null)
+                        {
+                            Obj.Description = "Invalid GameObject - QuestID " + Obj.Entry + ",ObjId=" + Obj.ObjID;
+                        }
+                        else
+                        {
+                            if (Obj.Description == null || Obj.Description.Length <= Obj.GameObject.Name.Length)
+                                Obj.Description = "Destroy " + Obj.GameObject.Name;
+                        }
+
+                    }
+                    break;
+
+                case Objective_Type.QUEST_USE_ITEM:
                 case Objective_Type.QUEST_GET_ITEM:
                     {
                         uint ObjID = 0;
@@ -1237,17 +597,15 @@ namespace WorldServer
 
                         if (ObjID != 0)
                         {
-                            Obj.Item = GetItem_Info(ObjID);
+                            Obj.Item = ItemService.GetItem_Info(ObjID);
                             if (Obj.Item == null)
                             {
-                                int a =Obj.Quest.Particular.ToLower().IndexOf("kill the ");
+                                int a = Obj.Quest.Particular.IndexOf("kill the ", StringComparison.OrdinalIgnoreCase);
                                 if (a >= 0)
                                 {
                                     string[] RestWords = Obj.Quest.Particular.Substring(a + 9).Split(' ');
                                     string Name = RestWords[0] + " " + RestWords[1];
-                                    Creature_proto Proto = GetCreatureProtoByName(Name);
-                                    if (Proto == null)
-                                        Proto = GetCreatureProtoByName(RestWords[0]);
+                                    Creature_proto Proto = CreatureService.GetCreatureProtoByName(Name) ?? CreatureService.GetCreatureProtoByName(RestWords[0]);
                                     if (Proto != null)
                                     {
                                         Obj.Item = new Item_Info();
@@ -1255,296 +613,172 @@ namespace WorldServer
                                         Obj.Item.Name = Obj.Description;
                                         Obj.Item.MaxStack = 20;
                                         Obj.Item.ModelId = 531;
-                                        _Item_Info.Add(Obj.Item.Entry, Obj.Item);
+                                        ItemService._Item_Info.Add(Obj.Item.Entry, Obj.Item);
 
                                         Log.Info("WorldMgr", "Creating Quest(" + Obj.Entry + ") Item : " + Obj.Item.Entry + ",  " + Obj.Item.Name + "| Adding Loot to : " + Proto.Name);
-                                        Creature_loot loot = new Creature_loot();
+                                        /*Creature_loot loot = new Creature_loot();
                                         loot.Entry = Proto.Entry;
                                         loot.ItemId = Obj.Item.Entry;
                                         loot.Info = Obj.Item;
                                         loot.Pct = 0;
-                                        GetLoots(Proto.Entry).Add(loot);
+                                        GetCreatureSpecificLootFor(Proto.Entry).Add(loot);*/
                                     }
                                 }
                             }
                         }
                     }
                     break;
-            };
-        }
 
-        static public Quest_Objectives GetQuestObjective(int Guid)
-        {
-            Quest_Objectives Obj;
-            _Objectives.TryGetValue(Guid, out Obj);
-            return Obj;
-        }
+                case Objective_Type.QUEST_WIN_SCENARIO:
+                    {
+                        ushort ObjID = 0;
+                        ushort.TryParse(Obj.ObjID, out ObjID);
 
-        static public Dictionary<uint, List<Quest>> _CreatureStarter;
+                        if (ObjID != 0)
+                            Obj.Scenario = ScenarioService.GetScenario_Info(ObjID);
 
-        static public void LoadQuestCreatureStarter()
-        {
-            _CreatureStarter = new Dictionary<uint, List<Quest>>();
-            if (FastLoading)
-                return;
+                        if (Obj.Scenario == null)
+                            Obj.Description = "Invalid Scenario - QuestID=" + Obj.Entry + ", ObjId=" + Obj.ObjID;
+                        else
+                            if (Obj.Description == null || Obj.Description.Length <= Obj.Scenario.Name.Length)
+                            Obj.Description = "Win " + Obj.Scenario.Name;
+                    }
+                    break;
 
-            IList<Quest_Creature_Starter> Starters = Database.SelectAllObjects<Quest_Creature_Starter>();
+                case Objective_Type.QUEST_CAPTURE_BO:
+                    {
+                        ushort ObjID = 0;
+                        ushort.TryParse(Obj.ObjID, out ObjID);
 
-            if (Starters != null)
-            {
-                Quest Q;
-                foreach (Quest_Creature_Starter Start in Starters)
-                {
-                    if (!_CreatureStarter.ContainsKey(Start.CreatureID))
-                        _CreatureStarter.Add(Start.CreatureID, new List<Quest>());
+                        if (ObjID != 0)
+                        {
+                            foreach (List<Battlefront_Objective> boList in BattlefrontService._BattlefrontObjectives.Values)
+                            {
+                                foreach (Battlefront_Objective bo in boList)
+                                {
+                                    if (bo.Entry == ObjID)
+                                    {
+                                        Obj.BattlefrontObjective = bo;
+                                        break;
+                                    }
+                                }
 
-                    Q = GetQuest(Start.Entry);
+                                if (Obj.BattlefrontObjective != null)
+                                    break;
+                            }
+                        }
 
-                    if(Q != null)
-                        _CreatureStarter[Start.CreatureID].Add(Q);
-                }
+                        if (Obj.BattlefrontObjective == null)
+                            Obj.Description = "Invalid Battlefield Objective - QuestID=" + Obj.Entry + ", ObjId=" + Obj.ObjID;
+                        else
+                            if (Obj.Description == null || Obj.Description.Length <= Obj.BattlefrontObjective.Name.Length)
+                            Obj.Description = "Capture " + Obj.Scenario.Name;
+                    }
+                    break;
+
+                case Objective_Type.QUEST_CAPTURE_KEEP:
+                    {
+                        ushort ObjID = 0;
+                        ushort.TryParse(Obj.ObjID, out ObjID);
+
+                        if (ObjID != 0)
+                        {
+                            foreach (List<Keep_Info> keepList in BattlefrontService._KeepInfos.Values)
+                            {
+                                foreach (Keep_Info keep in keepList)
+                                {
+                                    if (keep.KeepId == ObjID)
+                                    {
+                                        Obj.Keep = keep;
+                                        break;
+                                    }
+                                }
+
+                                if (Obj.Keep != null)
+                                    break;
+                            }
+                        }
+
+                        if (Obj.Keep == null)
+                            Obj.Description = "Invalid Keep - QuestID=" + Obj.Entry + ", ObjId=" + Obj.ObjID;
+                        else
+                            if (Obj.Description == null || Obj.Description.Length <= Obj.Keep.Name.Length)
+                            Obj.Description = "Capture " + Obj.Keep.Name;
+                    }
+                    break;
             }
-
-            Log.Success("LoadCreatureQuests", "Loaded " + _CreatureStarter.Count + " Quests Creature Starter");
         }
-
-        static public List<Quest> GetStartQuests(UInt32 CreatureID)
-        {
-            List<Quest> Quests;
-            _CreatureStarter.TryGetValue(CreatureID, out Quests);
-            return Quests;
-        }
-
-        static public Dictionary<uint, List<Quest>> _CreatureFinisher;
-
-        static public void LoadQuestCreatureFinisher()
-        {
-            _CreatureFinisher = new Dictionary<uint, List<Quest>>();
-            if (FastLoading)
-                return;
-
-            IList<Quest_Creature_Finisher> Finishers = Database.SelectAllObjects<Quest_Creature_Finisher>();
-
-            if (Finishers != null)
-            {
-                Quest Q;
-                foreach (Quest_Creature_Finisher Finisher in Finishers)
-                {
-                    if (!_CreatureFinisher.ContainsKey(Finisher.CreatureID))
-                        _CreatureFinisher.Add(Finisher.CreatureID, new List<Quest>());
-
-                     Q = GetQuest(Finisher.Entry);
-
-                    if (Q != null)
-                        _CreatureFinisher[Finisher.CreatureID].Add(Q);
-                }
-            }
-
-            Log.Success("LoadCreatureQuests", "Loaded " + _CreatureFinisher.Count + " Quests Creature Finisher");
-        }
-
-        static public List<Quest> GetFinishersQuests(UInt32 CreatureID)
-        {
-            List<Quest> Quests;
-            _CreatureFinisher.TryGetValue(CreatureID, out Quests);
-            return Quests;
-        }
-        static public uint GetQuestCreatureFinisher(ushort QuestId)
-        {
-            foreach (KeyValuePair<uint, List<Quest>> Kp in _CreatureFinisher)
-            {
-                foreach (Quest Q in Kp.Value)
-                    if (Q.Entry == QuestId)
-                        return Kp.Key;
-            }
-
-            return 0;
-        }
-
-        static public bool HasQuestToFinish(UInt32 CreatureID, UInt16 QuestID)
-        {
-            List<Quest> Quests;
-            if (_CreatureFinisher.TryGetValue(CreatureID, out Quests))
-            {
-                foreach (Quest Q in Quests)
-                    if (Q.Entry == QuestID)
-                        return true;
-            }
-
-            return false;
-        }
-
-        #endregion
-
-        #region Announces
-
-        static public List<TimedAnnounce> Announces = new List<TimedAnnounce>();
-
-        [LoadingFunction(true)]
-        static public void LoadAnnounces()
-        {
-            Announces = Database.SelectAllObjects<TimedAnnounce>() as List<TimedAnnounce>;
-        }
-
-        static public TimedAnnounce GetNextAnnounce(ref int Id, int ZoneId)
-        {
-            if (Id >= Announces.Count)
-                Id = 0;
-
-            for (; Id < Announces.Count;++Id)
-                if (Announces[Id].ZoneId == 0 || Announces[Id].ZoneId == ZoneId)
-                    return Announces[Id];
-
-            return null;
-        }
-
         #endregion
 
         #region Relation
 
-        static public Dictionary<UInt16, CellSpawns[,]> _RegionCells = new Dictionary<ushort, CellSpawns[,]>();
-        static public CellSpawns GetRegionCell(ushort RegionId, UInt16 X, UInt16 Y)
-        {
-            X = (UInt16)Math.Min(RegionMgr.MAX_CELL_ID - 1, X);
-            Y = (UInt16)Math.Min(RegionMgr.MAX_CELL_ID - 1, Y);
-
-            if (!_RegionCells.ContainsKey(RegionId))
-                _RegionCells.Add(RegionId, new CellSpawns[RegionMgr.MAX_CELL_ID, RegionMgr.MAX_CELL_ID]);
-
-            if (_RegionCells[RegionId][X, Y] == null)
-            {
-                CellSpawns Sp = new CellSpawns(RegionId, X, Y);
-                _RegionCells[RegionId][X, Y] = Sp;
-            }
-
-            return _RegionCells[RegionId][X, Y];
-        }
-        static public CellSpawns[,] GetCells(UInt16 RegionId)
-        {
-            if (!_RegionCells.ContainsKey(RegionId))
-                _RegionCells.Add(RegionId, new CellSpawns[RegionMgr.MAX_CELL_ID, RegionMgr.MAX_CELL_ID]);
-
-            return _RegionCells[RegionId];
-        }
-        static public CSharpScriptCompiler ScriptCompiler;
-
         [LoadingFunction(false)]
-        static public void LoadRelation()
+        public static void LoadRelation()
         {
             Log.Success("LoadRelation", "Loading Relations");
 
-            foreach (KeyValuePair<uint,Item_Info> Info in _Item_Info)
+            foreach (Item_Info info in ItemService._Item_Info.Values)
             {
-                if (Info.Value.Career != 0)
+                if (info.Career != 0)
                 {
-                    foreach (KeyValuePair<byte, CharacterInfo> Kp in CharMgr._Infos)
+                    foreach (KeyValuePair<byte, CharacterInfo> Kp in CharMgr.CharacterInfos)
                     {
-                        if ((Info.Value.Career & (1 << (Kp.Value.CareerLine - 1))) == 0)
+                        if ((info.Career & (1 << (Kp.Value.CareerLine - 1))) == 0)
                             continue;
-                        else
-                        {
-                            Info.Value.Realm = Kp.Value.Realm;
-                            break;
-                        }
+
+                        info.Realm = Kp.Value.Realm;
+                        break;
 
                     }
                 }
+
+                else if (info.Race > 0)
+                {
+                    if (((Constants.RaceMaskDwarf + Constants.RaceMaskHighElf + Constants.RaceMaskEmpire) & info.Race) > 0)
+                        info.Realm = 1;
+                    else info.Realm = 2;
+                }
             }
-
-            LoadRegionSpawns();
-
-            if(Program.Config.CleanSpawns)
-                RemoveDoubleSpawns();
 
             LoadChapters();
             LoadPublicQuests();
             LoadQuestsRelation();
             LoadScripts(false);
-            CharMgr.Database.ExecuteNonQuery("UPDATE Characters SET Online=0;");
+
+            foreach (List<Keep_Info> keepInfos in BattlefrontService._KeepInfos.Values)
+                foreach (Keep_Info keepInfo in keepInfos)
+                    if (PQuestService._PQuests.ContainsKey(keepInfo.PQuestId))
+                        keepInfo.PQuest = PQuestService._PQuests[keepInfo.PQuestId];
+
+            CharMgr.Database.ExecuteNonQuery("UPDATE war_characters.characters_value SET Online=0;");
+
+            // Preload T4 regions
+            Log.Info("Regions", "Preloading pairing regions...");
+            // Tier 1
+            GetRegion(1, true); // dw/gs
+            GetRegion(3, true); // he/de
+            GetRegion(8, true); // em/ch
+
+            // Tier 2
+            GetRegion(12, true); // dw/gs
+            GetRegion(15, true); // he/de
+            GetRegion(14, true); // em/ch
+
+            // Tier 3
+            GetRegion(10, true); // dw/gs
+            GetRegion(16, true); // he/de
+            GetRegion(6, true); // em/ch
+
+            // Tier 4
+            GetRegion(2, true); // dw/gs
+            GetRegion(4, true);  // he/de
+            GetRegion(11, true); // em/ch
+
+            GetRegion(9, true); // lotd
+            Log.Success("Regions", "Preloaded pairing regions.");
         }
 
-        static public void LoadRegionSpawns()
-        {
-            long InvalidSpawns = 0;
-            Zone_Info Info = null;
-            ushort X, Y = 0;
-            Dictionary<string, int> RegionCount = new Dictionary<string, int>();
-
-            {
-                Creature_spawn Spawn;
-                foreach (KeyValuePair<uint, Creature_spawn> Kp in CreatureSpawns)
-                {
-                    Spawn = Kp.Value;
-                    Spawn.Proto = GetCreatureProto(Spawn.Entry);
-                    if (Spawn.Proto == null)
-                    {
-                        Log.Debug("LoadRegionSpawns", "Invalid Creature Proto (" + Spawn.Entry + "), spawn Guid(" + Spawn.Guid + ")");
-                        ++InvalidSpawns;
-                        continue;
-                    }
-
-                    Info = GetZone_Info(Spawn.ZoneId);
-                    if (Info != null)
-                    {
-                        X = (UInt16)(Spawn.WorldX >> 12);
-                        Y = (UInt16)(Spawn.WorldY >> 12);
-
-                        GetRegionCell(Info.Region, X, Y).AddSpawn(Spawn);
-
-                        if (!RegionCount.ContainsKey(Info.Name))
-                            RegionCount.Add(Info.Name, 0);
-
-                        ++RegionCount[Info.Name];
-                    }
-                    else
-                    {
-                        Log.Debug("LoadRegionSpawns", "ZoneId (" + Spawn.ZoneId + ") invalid, Spawn Guid(" + Spawn.Guid + ")");
-                        ++InvalidSpawns;
-                    }
-                }
-            }
-
-            {
-                GameObject_spawn Spawn;
-                foreach (KeyValuePair<uint,GameObject_spawn> Kp in GameObjectSpawns)
-                {
-                    Spawn = Kp.Value;
-                    Spawn.Proto = GetGameObjectProto(Spawn.Entry);
-                    if (Spawn.Proto == null)
-                    {
-                        Log.Debug("LoadRegionSpawns", "Invalid GameObject Proto (" + Spawn.Entry + "), spawn Guid(" + Spawn.Guid + ")");
-                        ++InvalidSpawns;
-                        continue;
-                    }
-
-                    Info = GetZone_Info(Spawn.ZoneId);
-                    if (Info != null)
-                    {
-                        X = (UInt16)(Spawn.WorldX >> 12);
-                        Y = (UInt16)(Spawn.WorldY >> 12);
-
-                        GetRegionCell(Info.Region, X, Y).AddSpawn(Spawn);
-
-                        if (!RegionCount.ContainsKey(Info.Name))
-                            RegionCount.Add(Info.Name, 0);
-
-                        ++RegionCount[Info.Name];
-                    }
-                    else
-                    {
-                        Log.Debug("LoadRegionSpawns", "ZoneId (" + Spawn.ZoneId + ") invalid, Spawn Guid(" + Spawn.Guid + ")");
-                        ++InvalidSpawns;
-                    }
-                }
-            }
-
-            if (InvalidSpawns > 0)
-                Log.Error("LoadRegionSpawns", "[" + InvalidSpawns + "] Invalid Spawns");
-
-            foreach (KeyValuePair<string, int> Counts in RegionCount)
-                Log.Debug("Region", "[" + Counts.Key + "] : " + Counts.Value);
-        }
-        static public void LoadChapters()
+        public static void LoadChapters()
         {
             Log.Success("LoadChapters", "Loading Zone from Chapters");
 
@@ -1552,136 +786,202 @@ namespace WorldServer
 
             Zone_Info Zone = null;
             Chapter_Info Info;
-            foreach (KeyValuePair<uint,Chapter_Info> Kp in _Chapters)
+            foreach (KeyValuePair<uint, Chapter_Info> Kp in ChapterService._Chapters)
             {
                 Info = Kp.Value;
-                Zone = GetZone_Info(Info.ZoneId);
+                Zone = ZoneService.GetZone_Info(Info.ZoneId);
 
                 if (Zone == null || (Info.PinX <= 0 && Info.PinY <= 0))
                 {
                     Log.Debug("LoadChapters", "Chapter (" + Info.Entry + ")[" + Info.Name + "] Invalid");
                     ++InvalidChapters;
                 }
-                else
+
+                if (Info.T1Rewards == null)
+                    Info.T1Rewards = new List<Chapter_Reward>();
+                if (Info.T2Rewards == null)
+                    Info.T2Rewards = new List<Chapter_Reward>();
+                if (Info.T3Rewards == null)
+                    Info.T3Rewards = new List<Chapter_Reward>();
+
+                List<Chapter_Reward> Rewards;
+                if (ChapterService._Chapters_Reward.TryGetValue(Info.Entry, out Rewards))
                 {
-                    List<Chapter_Reward> Rewards;
-                    if (_Chapters_Reward.TryGetValue(Info.Entry, out Rewards))
-                        Info.Rewards = Rewards;
-                    else
-                        Info.Rewards = new List<Chapter_Reward>();
-
-                    foreach (Chapter_Reward Reward in Info.Rewards.ToArray())
+                    foreach (Chapter_Reward CW in Rewards)
                     {
-                        Reward.Item = GetItem_Info(Reward.ItemId);
-                        Reward.Chapter = Info;
-
-                        if (Reward.Item == null)
-                            Info.Rewards.Remove(Reward);
+                        if (Info.Tier1InfluenceCount == CW.InfluenceCount)
+                        {
+                            Info.T1Rewards.Add(CW);
+                        }
+                        else if (Info.Tier2InfluenceCount == CW.InfluenceCount)
+                        {
+                            Info.T2Rewards.Add(CW);
+                        }
+                        else if (Info.Tier3InfluenceCount == CW.InfluenceCount)
+                        {
+                            Info.T3Rewards.Add(CW);
+                        }
                     }
-
-                    GetRegionCell(Zone.Region, (ushort)((float)(Info.PinX / 4096) + Zone.OffX), (ushort)((float)(Info.PinY / 4096) + Zone.OffY)).AddChapter(Info);
                 }
 
+
+                foreach (Chapter_Reward Reward in Info.T1Rewards.ToArray())
+                {
+                    Reward.Item = ItemService.GetItem_Info(Reward.ItemId);
+                    Reward.Chapter = Info;
+
+                    if (Reward.Item == null)
+                        Info.T1Rewards.Remove(Reward);
+                }
+
+                foreach (Chapter_Reward Reward in Info.T2Rewards.ToArray())
+                {
+                    Reward.Item = ItemService.GetItem_Info(Reward.ItemId);
+                    Reward.Chapter = Info;
+
+                    if (Reward.Item == null)
+                        Info.T2Rewards.Remove(Reward);
+                }
+                foreach (Chapter_Reward Reward in Info.T3Rewards.ToArray())
+                {
+                    Reward.Item = ItemService.GetItem_Info(Reward.ItemId);
+                    Reward.Chapter = Info;
+
+                    if (Reward.Item == null)
+                        Info.T3Rewards.Remove(Reward);
+                }
+
+                CellSpawnService.GetRegionCell(Zone.Region, (ushort)((float)(Info.PinX / 4096) + Zone.OffX), (ushort)((float)(Info.PinY / 4096) + Zone.OffY)).AddChapter(Info);
             }
+
+
 
             if (InvalidChapters > 0)
                 Log.Error("LoadChapters", "[" + InvalidChapters + "] Invalid Chapter(s)");
         }
-        static public void LoadPublicQuests()
+        public static void LoadPublicQuests()
         {
             Zone_Info Zone = null;
             PQuest_Info Info;
-            foreach (KeyValuePair<uint,PQuest_Info> Kp in _PQuests)
+            List<string> skippedPQs = new List<string>();
+
+            foreach (KeyValuePair<uint, PQuest_Info> Kp in PQuestService._PQuests)
             {
                 Info = Kp.Value;
-                Zone = GetZone_Info(Info.ZoneId);
+                Zone = ZoneService.GetZone_Info(Info.ZoneId);
                 if (Zone == null)
                     continue;
 
 
-                if (!_PQuest_Objectives.TryGetValue(Info.Entry, out Info.Objectives))
+                if (!PQuestService._PQuest_Objectives.TryGetValue(Info.Entry, out Info.Objectives))
                     Info.Objectives = new List<PQuest_Objective>();
                 else
                 {
                     foreach (PQuest_Objective Obj in Info.Objectives)
                     {
                         Obj.Quest = Info;
-                        GeneratePQuestObjective(Obj, Obj.Quest);
+                        PQuestService.GeneratePQuestObjective(Obj, Obj.Quest);
+
+                        if (!PQuestService._PQuest_Spawns.TryGetValue(Obj.Guid, out Obj.Spawns))
+                            Obj.Spawns = new List<PQuest_Spawn>();
                     }
                 }
 
-                GetRegionCell(Zone.Region, (ushort)((float)(Info.PinX / 4096) + Zone.OffX), (ushort)((float)(Info.PinY / 4096) + Zone.OffY)).AddPQuest(Info);
-            }
-        }
-        static public void LoadQuestsRelation()
-        {
-            LoadQuestCreatureStarter();
-            LoadQuestCreatureFinisher();
+                //Log.Info("LoadPublicQuests", "Loaded public quest "+Info.Entry+" to region "+Zone.Region+" cell at X: "+ ((float)(Info.PinX / 4096) + Zone.OffX)+" "+ (float)(Info.PinY / 4096) + Zone.OffY);
 
-            foreach (KeyValuePair<uint, Creature_proto> Kp in CreatureProtos)
+                bool skipLoad = false;
+
+                foreach (List<Keep_Info> keepInfos in BattlefrontService._KeepInfos.Values)
+                {
+                    if (keepInfos.Any(keep => keep.PQuestId == Kp.Key))
+                    {
+                        skippedPQs.Add(Kp.Value.Name);
+                        skipLoad = true;
+                        break;
+                    }
+                }
+
+                if (!skipLoad)
+                   CellSpawnService.GetRegionCell(Zone.Region, (ushort)((float)(Info.PinX / 4096) + Zone.OffX), (ushort)((float)(Info.PinY / 4096) + Zone.OffY)).AddPQuest(Info);
+            }
+
+            if (skippedPQs.Count > 0)
+                Log.Info("Skipped PQs", string.Join(", ", skippedPQs));
+        }
+        public static void LoadQuestsRelation()
+        {
+            QuestService.LoadQuestCreatureStarter();
+            QuestService.LoadQuestCreatureFinisher();
+
+            foreach (KeyValuePair<uint, Creature_proto> Kp in CreatureService.CreatureProtos)
             {
-                Kp.Value.StartingQuests = GetStartQuests(Kp.Key);
-                Kp.Value.FinishingQuests = GetFinishersQuests(Kp.Key);
+                Kp.Value.StartingQuests = QuestService.GetStartQuests(Kp.Key);
+                Kp.Value.FinishingQuests = QuestService.GetFinishersQuests(Kp.Key);
             }
 
             Quest quest;
 
             int MaxGuid = 0;
-            foreach (KeyValuePair<int, Quest_Objectives> Kp in _Objectives)
+            foreach (KeyValuePair<int, Quest_Objectives> Kp in QuestService._Objectives)
             {
                 if (Kp.Value.Guid >= MaxGuid)
                     MaxGuid = Kp.Value.Guid;
             }
 
-            foreach (KeyValuePair<int, Quest_Objectives> Kp in _Objectives)
+            foreach (KeyValuePair<int, Quest_Objectives> Kp in QuestService._Objectives)
             {
-                quest = Kp.Value.Quest = GetQuest(Kp.Value.Entry);
+                quest = Kp.Value.Quest = QuestService.GetQuest(Kp.Value.Entry);
                 if (quest == null)
                     continue;
 
-                Kp.Value.num = (byte)(quest.Objectives.Count + 1);
                 quest.Objectives.Add(Kp.Value);
             }
 
-            foreach (KeyValuePair<ushort, Quest> Kp in _Quests)
+            foreach (Quest_Map Q in QuestService._QuestMaps)
+            {
+                quest = QuestService.GetQuest(Q.Entry);
+                if (quest == null)
+                    continue;
+
+                quest.Maps.Add(Q);
+            }
+
+            foreach (KeyValuePair<ushort, Quest> Kp in QuestService._Quests)
             {
                 quest = Kp.Value;
 
                 if (quest.Objectives.Count == 0)
                 {
-                    UInt32 Finisher = GetQuestCreatureFinisher(quest.Entry);
+                    uint Finisher = QuestService.GetQuestCreatureFinisher(quest.Entry);
                     if (Finisher != 0)
                     {
                         Quest_Objectives NewObj = new Quest_Objectives();
                         NewObj.Guid = ++MaxGuid;
                         NewObj.Entry = quest.Entry;
-                        NewObj.ObjType = (uint)Objective_Type.QUEST_SPEACK_TO;
+                        NewObj.ObjType = (uint)Objective_Type.QUEST_SPEAK_TO;
                         NewObj.ObjID = Finisher.ToString();
                         NewObj.ObjCount = 1;
-                        NewObj.num = (byte)(quest.Objectives.Count + 1);
                         NewObj.Quest = quest;
 
                         quest.Objectives.Add(NewObj);
-                        _Objectives.Add(NewObj.Guid, NewObj);
+                        QuestService._Objectives.Add(NewObj.Guid, NewObj);
 
                         Log.Debug("WorldMgr", "Creating Objective for quest with no objectives: " + Kp.Value.Entry + " " + Kp.Value.Name);
                     }
                 }
             }
 
-            foreach (KeyValuePair<int, Quest_Objectives> Kp in _Objectives)
+            foreach (KeyValuePair<int, Quest_Objectives> Kp in QuestService._Objectives)
             {
                 if (Kp.Value.Quest == null)
                     continue;
-
-                GenerateObjectif(Kp.Value, Kp.Value.Quest);
+                GenerateObjective(Kp.Value, Kp.Value.Quest);
             }
-
 
             string sItemID, sCount;
             uint ItemID, Count;
             Item_Info Info;
-            foreach (KeyValuePair<ushort, Quest> Kp in _Quests)
+            foreach (KeyValuePair<ushort, Quest> Kp in QuestService._Quests)
             {
                 if (Kp.Value.Choice.Length <= 0)
                     continue;
@@ -1699,7 +999,7 @@ namespace WorldServer
                     ItemID = uint.Parse(sItemID);
                     Count = uint.Parse(sCount);
 
-                    Info = GetItem_Info(ItemID);
+                    Info = ItemService.GetItem_Info(ItemID);
                     if (Info == null)
                         continue;
 
@@ -1710,120 +1010,20 @@ namespace WorldServer
                 }
             }
         }
-
-        static public void RemoveDoubleSpawns()
-        {
-            uint Space = 400;
-            int[] Removed = new int[255];
-            List<uint> Guids = new List<uint>();
-
-            Zone_Info Info = null;
-            int i, y, Px, Py, SPx, Spy;
-            CellSpawns[,] Cell;
-
-            foreach (KeyValuePair<ushort,CellSpawns[,]> Kp in _RegionCells)
-            {
-                Cell = Kp.Value;
-                for (i = 0; i < Cell.GetLength(0); ++i)
-                {
-                    for (y = 0; y < Cell.GetLength(1); ++y)
-                    {
-                        if (Cell[i, y] == null)
-                            continue;
-
-                        foreach (Creature_spawn Sp in Cell[i, y].CreatureSpawns.ToArray())
-                        {
-                            if (Sp != null || Sp.Proto == null || GetStartQuests(Sp.Proto.Entry) != null)
-                                continue;
-
-                            if (Info == null || Info.ZoneId != Sp.ZoneId)
-                                Info = GetZone_Info(Sp.ZoneId);
-
-                            Px = ZoneMgr.CalculPin(Info, Sp.WorldX, true);
-                            Py = ZoneMgr.CalculPin(Info, Sp.WorldY, false);
-
-                            foreach (Creature_spawn SubSp in Cell[i, y].CreatureSpawns.ToArray())
-                            {
-                                if (SubSp.Proto == null || Sp.Entry != SubSp.Entry || Sp == SubSp)
-                                    continue;
-
-                                SPx = ZoneMgr.CalculPin(Info, SubSp.WorldX, true);
-
-                                if (Px > SPx + Space || Px < SPx - Space)
-                                    continue;
-
-                                Spy = ZoneMgr.CalculPin(Info, SubSp.WorldY, true);
-
-                                if (Py > Spy + Space || Py < Spy - Space)
-                                    continue;
-
-                                Removed[SubSp.ZoneId]++;
-                                Guids.Add(SubSp.Guid);
-                                Cell[i, y].CreatureSpawns.Remove(SubSp);
-                                SubSp.Proto = null;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (Guids.Count > 0)
-            {
-                string L = "(";
-                foreach (uint Guid in Guids)
-                {
-                    L += Guid + ",";
-                }
-
-                L = L.Remove(L.Length - 1, 1);
-                L += ")";
-
-                Log.Info("Spawns", "DELETE FROM creature_spawns WHERE Guid in " + L + ";");
-                Database.ExecuteNonQuery("DELETE FROM creature_spawns WHERE Guid in " + L +";");
-            }
-
-
-            for (i = 0; i < 255; ++i)
-            {
-                if (Removed[i] != 0)
-                    Log.Info("Removed", "Zone : " + i + " : " + Removed[i]);
-            }
-        }
-
-        #endregion
-
-        #region Mounts
-
-        static public Dictionary<uint, Mount_Info> _Mounts = new Dictionary<uint, Mount_Info>();
-
-        [LoadingFunction(true)]
-        static public void LoadMounts()
-        {
-            List<Mount_Info> Mounts = Database.SelectAllObjects<Mount_Info>() as List<Mount_Info>;
-            foreach (Mount_Info M in Mounts)
-                _Mounts.Add(M.Id, M);
-
-            Log.Success("Mounts", "Loaded " + _Mounts.Count + " Mounts");
-        }
-
-        static public Mount_Info GetMount(uint Id)
-        {
-            Mount_Info M;
-            _Mounts.TryGetValue(Id, out M);
-            return M;
-        }
+        
 
         #endregion
 
         #region Scripts
 
-        static public Dictionary<string, Type> LocalScripts = new Dictionary<string, Type>();
-        static public Dictionary<string, AGeneralScript> GlobalScripts = new Dictionary<string, AGeneralScript>();
-        static public Dictionary<uint, Type> CreatureScripts = new Dictionary<uint, Type>();
-        static public Dictionary<uint, Type> GameObjectScripts = new Dictionary<uint, Type>();
-        static public ScriptsInterface GeneralScripts;
+        public static CSharpScriptCompiler ScriptCompiler;
+        public static Dictionary<string, Type> LocalScripts = new Dictionary<string, Type>();
+        public static Dictionary<string, AGeneralScript> GlobalScripts = new Dictionary<string, AGeneralScript>();
+        public static Dictionary<uint, Type> CreatureScripts = new Dictionary<uint, Type>();
+        public static Dictionary<uint, Type> GameObjectScripts = new Dictionary<uint, Type>();
+        public static ScriptsInterface GeneralScripts;
 
-        static public void LoadScripts(bool Reload)
+        public static void LoadScripts(bool Reload)
         {
             GeneralScripts = new ScriptsInterface();
 
@@ -1843,10 +1043,10 @@ namespace WorldServer
 
                     foreach (GeneralScriptAttribute at in type.GetCustomAttributes(typeof(GeneralScriptAttribute), true))
                     {
-                        if (at.ScriptName != null && at.ScriptName != "")
+                        if (!string.IsNullOrEmpty(at.ScriptName))
                             at.ScriptName = at.ScriptName.ToLower();
 
-                        Log.Success("Scripting", "Resgistering Script :" + at.ScriptName );
+                        Log.Success("Scripting", "Registering Script :" + at.ScriptName);
 
                         if (at.GlobalScript)
                         {
@@ -1884,7 +1084,7 @@ namespace WorldServer
                                     GameObjectScripts[at.GameObjectEntry] = type;
                                 }
                             }
-                            else if(at.ScriptName != null && at.ScriptName != "")
+                            else if (!string.IsNullOrEmpty(at.ScriptName))
                             {
                                 Log.Success("Scripts", "Registering Name Script :" + at.ScriptName);
 
@@ -1908,20 +1108,18 @@ namespace WorldServer
             {
                 if (Program.Server != null)
                     Program.Server.LoadPacketHandler();
-
-                AbilityMgr.LoadAbilityHandlers();
             }
         }
 
-        static public AGeneralScript GetScript(Object Obj, string ScriptName)
+        public static AGeneralScript GetScript(Object Obj, string ScriptName)
         {
-            if (ScriptName != null && ScriptName.Length > 0)
+            if (!string.IsNullOrEmpty(ScriptName))
             {
                 ScriptName = ScriptName.ToLower();
 
                 if (GlobalScripts.ContainsKey(ScriptName))
                     return GlobalScripts[ScriptName];
-                else if (LocalScripts.ContainsKey(ScriptName))
+                if (LocalScripts.ContainsKey(ScriptName))
                 {
                     AGeneralScript Script = Activator.CreateInstance(LocalScripts[ScriptName]) as AGeneralScript;
                     Script.ScriptName = ScriptName;
@@ -1948,10 +1146,588 @@ namespace WorldServer
             return null;
         }
 
-        static public void UpdateScripts(long Tick)
+        public static void UpdateScripts(long Tick)
         {
             GeneralScripts.Update(Tick);
         }
+
+        #endregion
+
+        #region Scenarios
+        public static ScenarioMgr ScenarioMgr;
+
+        public static InstanceMgr InstanceMgr;
+
+        [LoadingFunction(true)]
+        public static void StartScenarioMgr()
+        {
+            ScenarioMgr = new ScenarioMgr(ScenarioService.ActiveScenarios);
+        }
+
+        [LoadingFunction(true)]
+        public static void StartInstanceMgr()
+        {
+            InstanceMgr = new InstanceMgr();
+        }
+
+        #endregion
+
+        #region Settings
+
+        public static WorldSettingsMgr WorldSettingsMgr;
+
+        [LoadingFunction(true)]
+        public static void StartWorldSettingsMgr()
+        {
+            WorldSettingsMgr = new WorldSettingsMgr();
+        }
+
+        #endregion
+
+
+
+        #region Campaign
+
+        public static void WorldUpdateStart()
+        {
+            Log.Debug("WorldMgr", "Starting World Monitor...");
+
+            _worldThread = new Thread(WorldUpdate);
+            _worldThread.Start();
+        }
+
+        public static void GroupUpdateStart()
+        {
+            Log.Debug("WorldMgr", "Starting Group Updater...");
+
+            _groupThread = new Thread(GroupUpdate);
+            _groupThread.Start();
+        }
+
+
+        public static Dictionary<int,int> GetZonesFightLevel()
+        {
+            var level = new Dictionary<int,int>();
+            foreach (var region in WorldMgr._Regions.Where(e => e.Bttlfront != null).ToList())
+            {
+                foreach (var zone in region.ZonesMgr.ToList())
+                {
+                    var hotspots = zone.GetHotSpots();
+                    if (hotspots.Count > 0)
+                        level[zone.ZoneId] = hotspots.Where(e=>e.Item2 >= ZoneMgr.LOW_FIGHT).Max(e => e.Item2);
+                }
+            }
+            return level;
+        }
+
+        /// <summary>
+        /// Show swords on world map if zone has people fighting it
+        /// </summary>
+        public static void SendZoneFightLevel(Player player = null)
+        {
+            var fightLevel = GetZonesFightLevel();
+
+            PacketOut Out = new PacketOut((byte)Opcodes.F_UPDATE_HOT_SPOT);
+            Out.WriteByte((byte)fightLevel.Count);
+            Out.WriteByte(2); //world hotspots
+            Out.WriteByte(0);
+
+            //fight level
+            uint none = 0x00000000;
+            uint small = 0x01000000;
+            uint large = 0x01020000;
+            uint huge = 0x01020100;
+
+            foreach (var zoneId in fightLevel.Keys)
+            {
+                Out.WriteByte((byte)zoneId);
+
+                if (fightLevel[zoneId] >= ZoneMgr.LARGE_FIGHT)
+                    Out.WriteUInt32(huge);
+                else if (fightLevel[zoneId] > ZoneMgr.MEDIUM_FIGHT)
+                    Out.WriteUInt32(large);
+                else if (fightLevel[zoneId] > ZoneMgr.LOW_FIGHT)
+                    Out.WriteUInt32(small);
+                else
+                    Out.WriteUInt32(none);
+            }
+
+            if (player != null)
+                player.SendPacket(Out);
+            else
+            {
+                lock (Player._Players)
+                {
+                    foreach (Player pPlr in Player._Players)
+                    {
+                        if (pPlr == null || pPlr.IsDisposed || !pPlr.IsInWorld())
+                            continue;
+
+                        pPlr.SendCopy(Out);
+                    }
+                }
+            }
+
+            foreach (var region in WorldMgr._Regions.Where(e => e.Bttlfront != null).ToList())
+            {
+                foreach (var zone in region.ZonesMgr.ToList())
+                {
+                    zone.SendHotSpots(player);
+                }
+            }
+        }
+
+
+        private static void WorldUpdate()
+        {
+            while (_running)
+            {
+                if (ZoneService._Zone_Info != null)
+                {
+                    SendZoneFightLevel();
+
+                    foreach (var region in WorldMgr._Regions.Where(e => e.Bttlfront != null).ToList())
+                    {
+                        foreach (var zone in region.ZonesMgr.ToList())
+                        {
+                            zone.DecayHotspots();
+                        }
+                    }
+                }
+                Thread.Sleep(15000);
+            }
+
+        }
+
+
+        private static void GroupUpdate()
+        {
+            while (_running)
+            {
+                List<Group> _groups = new List<Group>();
+                lock (Group.WorldGroups)
+                {
+                    foreach (Group g in Group.WorldGroups)
+                    {
+                        try
+                        {
+                            _groups.Add(g);
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+                    }
+                }
+                List<KeyValuePair<uint, GroupAction>> _worldActions = new List<KeyValuePair<uint, GroupAction>>();
+                lock (Group._pendingGroupActions)
+                {
+                    foreach (KeyValuePair<uint, GroupAction> kp in Group._pendingGroupActions)
+                    {
+                        _worldActions.Add(kp);
+                    }
+                    Group._pendingGroupActions.Clear();
+                }
+
+                foreach (Group g in _groups)
+                {
+                    try
+                    {
+                        foreach (KeyValuePair<uint, GroupAction> grpAction in _worldActions)
+                        {
+                            if(g.GroupId == grpAction.Key)
+                                g.EnqueuePendingGroupAction(grpAction.Value);
+                        }
+
+                        g.Update(TCPManager.GetTimeStampMS());
+                    }
+                    catch(Exception e)
+                    {
+                        Log.Error("Caught exception", "Exception thrown: "+e);
+                        continue;
+                    }
+                }
+
+                _worldActions.Clear();
+                _groups.Clear();
+
+                Thread.Sleep(100);
+            }
+
+        }
+
+        public static void BuildCaptureStatus(PacketOut Out, RegionMgr region)
+        {
+            if (region == null)
+                Out.Fill(0, 3);
+            else
+                if (region.ndbf != null)
+                    region.ndbf.WriteCaptureStatus(Out);
+                else
+                {
+                    region.ndbf.WriteCaptureStatus(Out, region.ndbf.LockingRealm);    
+            }
+            
+        }
+
+        public static void BuildBattlefrontStatus(PacketOut Out, RegionMgr region)
+        {
+            if (region == null)
+                Out.Fill(0, 3);
+            else if (region.ndbf != null)
+            {
+                region.ndbf.WriteBattlefrontStatus(Out);
+            }
+            else
+            {
+                region.ndbf.WriteBattlefrontStatus(Out);
+            }
+        }
+
+        public static void SendCampaignStatus(Player plr)
+        {
+            _logger.Trace("Send Campaign Status");
+            PacketOut Out = new PacketOut((byte) Opcodes.F_CAMPAIGN_STATUS, 159);
+            Out.WriteHexStringBytes("0005006700CB00"); // 7
+
+            // Dwarfs vs Greenskins T1
+            BuildCaptureStatus(Out, GetRegion(1, false));
+
+            // Dwarfs vs Greenskins T2
+            BuildCaptureStatus(Out, GetRegion(12, false));
+
+            // Dwarfs vs Greenskins T3
+            BuildCaptureStatus(Out, GetRegion(10, false));
+
+            // Dwarfs vs Greenskins T4
+            BuildCaptureStatus(Out, GetRegion(2, false));
+
+            // Empire vs Chaos T1
+            BuildCaptureStatus(Out, GetRegion(8, false));
+
+            // Empire vs Chaos T2
+            BuildCaptureStatus(Out, GetRegion(14, false));
+
+            // Empire vs Chaos T3
+            BuildCaptureStatus(Out, GetRegion(6, false));
+
+            // Empire vs Chaos T4
+            BuildCaptureStatus(Out, GetRegion(11, false));
+
+            // High Elves vs Dark Elves T1
+            BuildCaptureStatus(Out, GetRegion(3, false));
+
+            // High Elves vs Dark Elves T2
+            BuildCaptureStatus(Out, GetRegion(15, false));
+
+            // High Elves vs Dark Elves T3
+            BuildCaptureStatus(Out, GetRegion(16, false));
+
+            // High Elves vs Dark Elves T4
+            BuildCaptureStatus(Out, GetRegion(4, false));
+
+            Out.Fill(0,83);
+
+            // RB   4/24/2016   Added logic for T4 campaign progression.
+            //gs t4
+            // 0 contested 1 order controled 2 destro controled 3 notcontroled locked
+            Out.WriteByte(3);   //dwarf fort
+            BuildBattlefrontStatus(Out, GetRegion(2, false));   //kadrin valley
+            Out.WriteByte(3);   //orc fort
+
+            //chaos t4
+            Out.WriteByte(3);   //empire fort
+            BuildBattlefrontStatus(Out, GetRegion(11, false));   //reikland
+            Out.WriteByte(3);   //chaos fort
+
+            //elf
+            Out.WriteByte(3);   //elf fort
+            BuildBattlefrontStatus(Out, GetRegion(4, false));   //etaine
+            Out.WriteByte(3);   //delf fort
+
+            Out.WriteByte(0); // Order underdog rating
+            Out.WriteByte(0); // Destruction underdog rating
+
+            if (plr == null)
+            {
+                byte[] buffer = Out.ToArray();
+
+                lock (Player._Players)
+                {
+                    foreach (Player player in Player._Players)
+                    {
+                        if (player == null || player.IsDisposed || !player.IsInWorld())
+                            continue;
+
+                        PacketOut playerCampaignStatus = new PacketOut(0, 159) {Position = 0};
+                        playerCampaignStatus.Write(buffer, 0, buffer.Length);
+
+                        if (player.Region?.ndbf != null)
+                            player.Region.ndbf.WriteVictoryPoints(player.Realm, playerCampaignStatus);
+
+                        else
+                            playerCampaignStatus.Fill(0, 9);
+
+                        playerCampaignStatus.Fill(0, 4);
+
+                        player.SendPacket(playerCampaignStatus);
+                    }
+                }
+            }
+            else
+            {
+                if (plr.Region?.ndbf != null)
+                    plr.Region.ndbf.WriteVictoryPoints(plr.Realm, Out);
+
+                else
+                    Out.Fill(0, 9);
+
+                Out.Fill(0, 4);
+
+                plr.SendPacket(Out);
+            }
+        }
+
+        // This is used to change the fronts during campaign, DoomsDay changes below
+        public static void EvaluateT4CampaignStatus(ushort Region)
+        {
+            ProximityProgressingBattlefront DvG = (ProximityProgressingBattlefront)GetRegion(2, false).Bttlfront;
+            ProximityProgressingBattlefront EvC = (ProximityProgressingBattlefront)GetRegion(11, false).Bttlfront; 
+            ProximityProgressingBattlefront HEvDE = (ProximityProgressingBattlefront)GetRegion(4, false).Bttlfront;
+            // codeword p0tat0 - changed for DoomsDay
+            /*ProgressingBattlefront DvG = (ProgressingBattlefront)GetRegion(2, false).Bttlfront;
+            ProgressingBattlefront EvC = (ProgressingBattlefront)GetRegion(11, false).Bttlfront;
+            ProgressingBattlefront HEvDE = (ProgressingBattlefront)GetRegion(4, false).Bttlfront;*/
+
+            // Evaluate if all three pairings are locked.
+            if (DvG.PairingLocked && EvC.PairingLocked && HEvDE.PairingLocked)
+            {
+                Log.Debug("WorldMgr.EvaluateT4CampaignStatus", "*** ALL THREE PAIRINGS HAVE BEEN LOCKED ***");
+
+                long _pairingLockTime = (30 * 60 * 1000);
+
+                #if (DEBUG)
+                    _pairingLockTime = (5 * 60 * 1000);
+                #endif
+
+                if (Constants.DoomsdaySwitch == 0)
+                {
+                    DvG.PairingUnlockTime = TCPManager.GetTimeStampMS() + _pairingLockTime;
+                    EvC.PairingUnlockTime = TCPManager.GetTimeStampMS() + _pairingLockTime;
+                    HEvDE.PairingUnlockTime = TCPManager.GetTimeStampMS() + _pairingLockTime;
+                }
+
+                ushort zone = 0;
+
+                // If all the pairings are locked and Order owns all 3 pairings...
+                if (DvG.GetZoneOwnership(3) == 1 && EvC.GetZoneOwnership(103) == 1 && HEvDE.GetZoneOwnership(203) == 1)
+                {
+                    lock (Player._Players)
+                    {
+                        foreach (Player plr in Player._Players)
+                        {
+                            if (!plr.ValidInTier(4, false) || plr.CurrentArea == null)
+                                continue;
+
+                            zone = plr.CurrentArea.ZoneId;
+
+                            plr.SendLocalizeString("The forces of Order have beaten back their foes at every turn, cleansed their lands, and secured a time of peace! Unfortunately, they lack the resources to take the fight to the enemy's gates, and drive home their victory.", ChatLogFilters.CHATLOGFILTERS_RVR, Localized_text.CHAT_TAG_DEFAULT);
+                            plr.SendLocalizeString("The forces of Order have beaten back their foes at every turn, cleansed their lands, and secured a time of peace! Unfortunately, they lack the resources to take the fight to the enemy's gates, and drive home their victory.", DvG.GetZoneOwnership(3) == (int)Realms.REALMS_REALM_ORDER ? ChatLogFilters.CHATLOGFILTERS_C_ORDER_RVR_MESSAGE : ChatLogFilters.CHATLOGFILTERS_C_DESTRUCTION_RVR_MESSAGE, Localized_text.CHAT_TAG_DEFAULT);
+                            
+                            if (plr.Realm == Realms.REALMS_REALM_ORDER && plr.CbtInterface.IsPvp && plr.CurrentArea.IsRvR && (zone == 3 || zone == 103 || zone == 203))
+                                plr.ItmInterface.CreateItem(13000250, 1);
+                            
+                        }
+                    }
+                }
+                // If all the pairings are locked and Destro owns all 3 pairings...
+                else if (DvG.GetZoneOwnership(9) == 2 && EvC.GetZoneOwnership(109) == 2 && HEvDE.GetZoneOwnership(209) == 2)
+                {
+                    lock (Player._Players)
+                    {
+                        foreach (Player plr in Player._Players)
+                        {
+                            if (!plr.ValidInTier(4, false) || plr.CurrentArea == null)
+                                continue;
+
+                            zone = plr.CurrentArea.ZoneId;
+
+                            plr.SendLocalizeString("The forces of Destruction have slaughtered, pillaged and razed a path into the very heartlands of their foes! But their infighting and the spoils of war slow them, and they lack the cohesion to subjugate their hated foes further.", ChatLogFilters.CHATLOGFILTERS_RVR, Localized_text.CHAT_TAG_DEFAULT);
+                            plr.SendLocalizeString("The forces of Destruction have slaughtered, pillaged and razed a path into the very heartlands of their foes! But their infighting and the spoils of war slow them, and they lack the cohesion to subjugate their hated foes further.", DvG.GetZoneOwnership(3) == (int)Realms.REALMS_REALM_ORDER ? ChatLogFilters.CHATLOGFILTERS_C_ORDER_RVR_MESSAGE : ChatLogFilters.CHATLOGFILTERS_C_DESTRUCTION_RVR_MESSAGE, Localized_text.CHAT_TAG_DEFAULT);
+                            
+                            if (plr.Realm == Realms.REALMS_REALM_DESTRUCTION && plr.CbtInterface.IsPvp && plr.CurrentArea.IsRvR && (zone == 9 || zone == 109 || zone == 209))
+                                plr.ItmInterface.CreateItem(13000249, 1);
+                            
+                        }
+                    }
+                }
+                // If all the pairings are just locked
+                else
+                {
+                    lock (Player._Players)
+                    {
+                        foreach (Player plr in Player._Players)
+                        {
+                            if (!plr.ValidInTier(4, false) || plr.CurrentArea == null)
+                                continue;
+
+                            zone = plr.CurrentArea.ZoneId;
+
+                            plr.SendLocalizeString("The forces of Order and Destruction have traded blows all the way to the gates of their foes! But their supply lines are exposed, and the enemy threatens their back lines. Both are forced to abandon the victories, and pull back for a time.", ChatLogFilters.CHATLOGFILTERS_RVR, Localized_text.CHAT_TAG_DEFAULT);
+                            plr.SendLocalizeString("The forces of Order and Destruction have traded blows all the way to the gates of their foes! But their supply lines are exposed, and the enemy threatens their back lines. Both are forced to abandon the victories, and pull back for a time.", ChatLogFilters.CHATLOGFILTERS_C_WHITE, Localized_text.CHAT_TAG_DEFAULT);
+                        }
+                    }
+                }
+
+                if(Constants.DoomsdaySwitch > 0)
+                {
+                    if (Region == 2) //DvG
+                        Region = 12;
+                    else if (Region == 4) //HEvDE
+                        Region = 15;
+                    else if (Region == 11) //EvC
+                        Region = 14;
+
+                    Random random = new Random();
+
+                    if (Constants.DoomsdaySwitch == 2)
+                    {
+                        int newPairing = random.Next(1, 4);
+                        ushort region = 12;
+
+                        switch (newPairing)
+                        {
+                            case 1:
+                                region = 12;
+                                break;
+                            case 2:
+                                region = 14;
+                                break;
+                            case 3:
+                                region = 15;
+                                break;
+                        }
+
+                        while (region == Region)
+                        {
+                            newPairing = random.Next(1, 4);
+                            switch (newPairing)
+                            {
+                                case 1:
+                                    region = 12;
+                                    break;
+                                case 2:
+                                    region = 14;
+                                    break;
+                                case 3:
+                                    region = 15;
+                                    break;
+                            }
+                        }
+
+                        ProximityBattlefront bttlfrnt = (ProximityBattlefront)GetRegion(region, false).Bttlfront;
+                        bttlfrnt.ResetPairing();
+
+                        /*bool campaignReset = true;
+                        for (int i = 0; i < 3; i++)
+                        {
+                            foreach (IBattlefront bf in BattlefrontList.RegionManagers[i])
+                            {
+                                ProximityBattlefront front = bf as ProximityBattlefront;
+                                if (front != null && !front.PairingLocked)
+                                {
+                                    campaignReset = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (campaignReset)
+                        {
+                            ProximityBattlefront bttlfrnt;
+
+                            bttlfrnt = (ProximityBattlefront)GetRegion(12, false).Bttlfront;
+                            bttlfrnt.ResetPairing();
+                            bttlfrnt.UpdateStateOfTheRealm();
+                            bttlfrnt = (ProximityBattlefront)GetRegion(14, false).Bttlfront;
+                            bttlfrnt.ResetPairing();
+                            bttlfrnt.UpdateStateOfTheRealm();
+                            bttlfrnt = (ProximityBattlefront)GetRegion(15, false).Bttlfront;
+                            bttlfrnt.ResetPairing();
+                            bttlfrnt.UpdateStateOfTheRealm();
+                        }*/
+                    }
+                    else
+                    {
+                        Battlefront bttlfrnt = (Battlefront)GetRegion(Region, false).Bttlfront;
+
+                        foreach (Battlefront b in BattlefrontList.Battlefronts[1])
+                        {
+                            if (Constants.DoomsdaySwitch == 2)
+                            {
+                                b.ResetPairing();
+                                b.UpdateStateOfTheRealm();
+                            }
+                            else
+                            {
+                                if (b != bttlfrnt)
+                                {
+                                    b.ResetPairing();
+                                    b.UpdateStateOfTheRealm();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        #endregion
+
+        #region Keep registry, to remove it's static bullshit
+        public static Dictionary<uint, Keep> _Keeps = new Dictionary<uint, Keep>();
+
+        public static void SendKeepStatus(Player Plr)
+        {
+            foreach (List<Keep_Info> list in BattlefrontService._KeepInfos.Values)
+            {
+                foreach (Keep_Info KeepInfo in list)
+                {
+                    if (_Keeps.ContainsKey(KeepInfo.KeepId))
+                    {
+                        _Keeps[KeepInfo.KeepId].SendKeepStatus(Plr);
+                    }
+                    else
+                    {
+                        PacketOut Out = new PacketOut((byte)Opcodes.F_KEEP_STATUS, 26);
+                        Out.WriteByte(KeepInfo.KeepId);
+                        Out.WriteByte(1); // anything else explosion
+                        Out.WriteByte(0); // ?
+                        Out.WriteByte(KeepInfo.Realm);
+                        Out.WriteByte(KeepInfo.DoorCount);
+                        Out.WriteByte(0); // Rank
+                        Out.WriteByte(100); // Door health
+                        Out.WriteByte(0); // Next rank %
+                        Out.Fill(0, 18);
+                        Plr.SendPacket(Out);
+                    }
+                }
+            }
+        }
+        #endregion
+        
+        #region Logging
+        [LoadingFunction(true)]
+        public static void ResetPacketLogSettings()
+        {
+            //turn off user specific packet logging when server restarts. This is because devs/gm forget to turn it off and log file grows > 20GB
+            Log.Debug("WorldMgr", "Resetting user packet log settings...");
+            Database.ExecuteNonQuery("update war_accounts.accounts set PacketLog = 0");
+        }
+        #endregion
+
+        #region Other
+
 
         #endregion
     }

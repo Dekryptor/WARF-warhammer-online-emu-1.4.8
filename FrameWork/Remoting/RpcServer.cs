@@ -1,21 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
+﻿
  
 using System;
 using System.Collections.Generic;
@@ -50,7 +33,7 @@ namespace FrameWork
 
     public class RpcServer
     {
-        static public int PING_TIME = 200;
+        public static int PING_TIME = 200;
         public TcpServerChannel Channel;
         public ServerMgr Mgr;
 
@@ -152,7 +135,7 @@ namespace FrameWork
                             foreach (RpcClientInfo Info in Mgr.GetClients())
                             {
                                 foreach (Type type in RegisteredTypes[1])
-                                    RpcServer.GetObject(type, Info.Ip, Info.Port).OnClientDisconnected(ToDisconnect);
+                                    GetObject(type, Info.Ip, Info.Port).OnClientDisconnected(ToDisconnect);
                             }
                         }
                     }
@@ -178,21 +161,21 @@ namespace FrameWork
 
         public T GetLocalObject<T>() where T : RpcObject
         {
-            return RpcServer.GetObject(typeof(T),LocalIp,LocalPort) as T;
+            return GetObject(typeof(T),LocalIp,LocalPort) as T;
         }
 
         public RpcObject GetLocalObject(Type type)
         {
-            return RpcServer.GetObject(type, LocalIp, LocalPort);
+            return GetObject(type, LocalIp, LocalPort);
         }
 
 
-        static public T GetObject<T>(RpcClientInfo Info) where T : RpcObject
+        public static T GetObject<T>(RpcClientInfo Info) where T : RpcObject
         {
             return GetObject(typeof(T), Info.Ip, Info.Port) as T;
         }
 
-        static public RpcObject GetObject(Type type, string Ip, int Port)
+        public static RpcObject GetObject(Type type, string Ip, int Port)
         {
             return Activator.GetObject(type, "tcp://" + Ip + ":" + Port + "/" + type.Name) as RpcObject;
         }

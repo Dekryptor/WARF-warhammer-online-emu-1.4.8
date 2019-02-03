@@ -7,27 +7,35 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "zone_taxis", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "zone_taxis", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Zone_Taxi : DataObject
     {
-        [DataElement()]
-        public UInt16 ZoneID;
+        [PrimaryKey]
+        public ushort ZoneID { get; set; }
+
+        [PrimaryKey]
+        public byte RealmID { get; set; }
 
         [DataElement()]
-        public byte RealmID;
+        public uint WorldX { get; set; }
 
         [DataElement()]
-        public UInt32 WorldX;
+        public uint WorldY { get; set; }
 
         [DataElement()]
-        public UInt32 WorldY;
+        public ushort WorldZ { get; set; }
 
         [DataElement()]
-        public UInt16 WorldZ;
+        public ushort WorldO { get; set; }
 
         [DataElement()]
-        public UInt16 WorldO;
+        public byte Tier { get; set; }
+
+        [DataElement()]
+        public bool Enable { get; set; }
+
+
 
         public Zone_Info Info;
     }

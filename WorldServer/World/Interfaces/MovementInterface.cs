@@ -1,398 +1,547 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.IO;
 using System.Text;
-
 using Common;
 using FrameWork;
 
 namespace WorldServer
 {
-    public enum eFormationType
-    {
-        // M x x x
-        Line,
-        //		x
-        // M x
-        //		x
-        Triangle,
-        //		 x
-        // x  M
-        //		 x
-        Protect,
-    };
-
     public class MovementInterface : BaseInterface
     {
-        static public readonly float METRE_SPEED_SEC = 6;
-        static public readonly float METRE_SPEED_MS = 60;
-
-        static public readonly int MIN_ALLOWED_DIST = 100;
-        static public readonly int MAX_ALLOWED_DIST = 200;
-        static public readonly int CONST_WALKTOTOLERANCE = 2;
-        static public readonly int CREATURE_SPEED = 100;
-
-        public Point3D TargetPosition = new Point3D(0, 0, 0);
-        public Point3D StartPosition = new Point3D(0, 0, 0);
-        public ushort TargetHeading = 0;
-
-        public Mount CurrentMount;
-
-        public bool IsMount()
+        [Flags]
+        private enum EObjectState
         {
-            return CurrentMount != null && CurrentMount.IsMount();
+            Stationary = 0x0,
+            Moving = 0x1,
+            LookingAt = 0x2,
+            EffectStates = 0x10,
+            NoGrav = 0x20,
+            Recall = 0x40
         }
 
-        public void UnMount()
+        public enum EMoveState
         {
-            if(CurrentMount != null)
-                CurrentMount.UnMount();
+            None,
+            Turn,
+            Move,
+            Follow,
+            Recall
         }
 
-        public override bool Load()
+        public EMoveState MoveState { get; private set; }
+        private EMoveState _lastState;
+
+        private Unit _unit;
+
+        public override void SetOwner(Object owner)
         {
-            base.Load();
-            if(_Owner.IsUnit())
-                CurrentMount = new Mount(_Owner.GetUnit());
-            return true;
+            _Owner = owner;
+            _unit = (Unit)owner;
         }
 
-        public override void Update(long Tick)
+        public override void Update(long tick)
         {
-            UpdateFollow();
-
-            if (CurrentSpeed != 0)
-            {
-                long e = MovementElapsedMs();
-                int PX = (int)(StartPosition.X + e * TickSpeedX);
-                int PY = (int)(StartPosition.Y + e * TickSpeedY);
-                int PZ = (int)(StartPosition.Z + e * TickSpeedZ);
-                _Owner.SetPosition((UInt16)PX, (UInt16)PY, (UInt16)PZ, _Owner.Heading, false);
-            }
-
-            base.Update(Tick);
-        }
-
-        #region Turn
-
-        public virtual void TurnTo(int tx, int ty)
-        {
-            TurnTo(tx, ty, true);
-        }
-        public virtual void TurnTo(int tx, int ty, bool sendUpdate)
-        {
-            _Owner.Heading = _Owner.GetHeading(new Point2D(tx, ty));
-            TargetHeading = _Owner.Heading;
-
-            if (!_Owner.IsPlayer() && sendUpdate)
-                _Owner.GetUnit().StateDirty = true;
-        }
-        public virtual void TurnTo(ushort heading)
-        {
-            TurnTo(heading, true);
-        }
-        public virtual void TurnTo(ushort heading, bool sendUpdate)
-        {
-            _Owner.Heading = heading;
-            TargetHeading = heading;
-
-            if (!_Owner.IsPlayer() && sendUpdate)
-                _Owner.GetUnit().StateDirty = true;
-        }
-        public virtual void TurnTo(Object target)
-        {
-            TurnTo(target, true);
-        }
-        public virtual void TurnTo(Object target, bool sendUpdate)
-        {
-            if (target == null || !target.IsInWorld() || target.Region != _Owner.Region)
+            if (_unit is Player)
                 return;
 
-            TurnTo(target.X, target.Y, sendUpdate);
+            /*
+            if (_lastState != MoveState)
+            {
+                _unit.Say("Updating: State: " + Enum.GetName(typeof (EMoveState), MoveState));
+                _lastState = MoveState;
+            }
+            */
+            
+            switch (MoveState)
+            {
+                case EMoveState.Move:
+                    UpdateMove(tick);
+                    break;
+                case EMoveState.Follow:
+                    UpdateFollow(tick);
+                    if (_moveDuration > 0)
+                        UpdateMove(tick);
+                    break;
+                case EMoveState.Recall:
+                    UpdateRecall(tick);
+                    break;
+            }
+        }
+
+        #region Speed Change
+
+        public ushort BaseSpeed { get; private set; } = 100;
+        public ushort MovementSpeed { get; private set; } = 100;
+        private int _followCatchupFactor;
+
+        private int _totalSpeed
+        {
+            get
+            {
+                if (MoveState == EMoveState.Follow)
+                    return MovementSpeed + _followCatchupFactor;
+                return MovementSpeed;
+            }
+        }
+
+        private float _speedScaler = 1f;
+
+        public void SetBaseSpeed(ushort newSpeed)
+        {
+            if (newSpeed == BaseSpeed)
+                return;
+
+            BaseSpeed = newSpeed;
+
+            RecalculateMovement();
+        }
+
+        public void ScaleSpeed(float newScaler)
+        {
+            if (newScaler == _speedScaler)
+                return;
+
+            _speedScaler = newScaler;
+
+            RecalculateMovement();
+        }
+
+        private void RecalculateMovement()
+        {
+            MovementSpeed = (ushort)(BaseSpeed * _speedScaler);
+
+            switch (MoveState)
+            {
+                case EMoveState.Move:
+                    Move(_destWorldPos);
+                    break;
+                case EMoveState.Follow:
+                    _nextFollowUpdate = 0;
+                    Follow(FollowTarget, _minFollowTolerance, _maxFollowTolerance);
+                    break;
+            }
+        }
+
+        #endregion
+
+        #region Facing
+
+        public void TurnTo(Point3D destWorldPos)
+        {
+            ushort newHeading = _unit.WorldPosition.GetHeading(destWorldPos);
+
+            if (newHeading != _unit.Heading)
+            {
+                _unit.Heading = newHeading;
+                if (!IsMoving)
+                    UpdateMovementState(null);
+            }
+        }
+
+        #endregion
+
+        #region Move
+
+        private readonly Point3D _destWorldPos = new Point3D(0, 0, 0);
+        private readonly Point3D _startWorldPos = new Point3D(0, 0, 0);
+        private ushort _destZoneId;
+
+        const int MOVE_TOLERANCE_UNITS = 2;
+        private long _moveStartTime;
+        private float _moveDuration;
+
+        public bool Stationary { get; set; }
+
+        public bool IsMoving => _moveDuration > 0;
+
+        private float GetMoveFactor(long deltaMs)
+        {
+            return Math.Min(1f, deltaMs/_moveDuration);
+        }
+
+        /// <summary>
+        /// Moves the creature to given coordinates.
+        /// </summary>
+        /// <param name="worldX">Target x coordinate</param>
+        /// <param name="worldY">Target y coordinate</param>
+        /// <param name="worldZ">Target z coordinate</param>
+        /// <remarks>Convenience method for scripts</remarks>
+        public void Move(int worldX, int worldY, int worldZ)
+        {
+            Move(new Point3D(worldX, worldY, worldZ));
+        }
+
+        public void Move(Point3D destWorldPos)
+        {
+            Vector2 destVect = new Vector2(_unit.WorldPosition.X - destWorldPos.X, _unit.WorldPosition.Y - destWorldPos.Y);
+
+            float distance = destVect.Magnitude;
+
+            if (distance <= MOVE_TOLERANCE_UNITS)
+            {
+                if (MoveState == EMoveState.Move)
+                    MoveState = EMoveState.None;
+                return;
+            }
+
+            _startWorldPos.SetCoordsFrom(_unit.WorldPosition);
+            _destWorldPos.SetCoordsFrom(destWorldPos);
+
+            Zone_Info destZone = _unit.Region.GetZone((ushort)(destWorldPos.X >> 12), (ushort)(destWorldPos.Y >> 12));
+
+            if (destZone == null)
+                return;
+
+            _destZoneId = destZone.ZoneId;
+
+            _unit.Heading = _unit.WorldPosition.GetHeading(_destWorldPos);
+
+            _unit.AiInterface.Debugger?.SendClientMessage("MOVE: Start: " + _startWorldPos + " End: " + _destWorldPos +" New Heading: "+ _unit.Heading+" Speed: "+_totalSpeed);
+
+            if (MovementSpeed > 0)
+            {
+                _moveStartTime = TCPManager.GetTimeStampMS();
+                _moveDuration = (distance/ _totalSpeed) *1000;
+            }
+
+            if (MoveState == EMoveState.None)
+                MoveState = EMoveState.Move;
+
+            UpdateMovementState(null);
+        }
+
+        private void UpdateMove(long tick)
+        {
+            if (MovementSpeed == 0 || _unit != null && _unit.IsDisabled || _unit != null && _unit.IsStaggered)
+                return;
+
+            long deltaMs = tick - _moveStartTime;
+
+            uint newWorldPosX = (uint)Point2D.Lerp(_startWorldPos.X, _destWorldPos.X, GetMoveFactor(deltaMs));
+            uint newWorldPosY = (uint)Point2D.Lerp(_startWorldPos.Y, _destWorldPos.Y, GetMoveFactor(deltaMs));
+
+            Zone_Info destZone = _unit.Region.GetZone((ushort)(newWorldPosX >> 12), (ushort)(newWorldPosY >> 12));
+
+            if (destZone == null)
+                return;
+
+            ushort pinX = _unit.Zone.CalculPin(newWorldPosX, true);
+            ushort pinY = _unit.Zone.CalculPin(newWorldPosY, false);
+            ushort pinZ = (ushort)Point2D.Lerp(_startWorldPos.Z, _destWorldPos.Z, GetMoveFactor(deltaMs));
+
+            _unit.SetPosition(pinX, pinY, pinZ, _unit.Heading, destZone.ZoneId);
+
+            if (tick > _moveStartTime + _moveDuration)
+            {
+                if (MoveState == EMoveState.Move)
+                    MoveState = EMoveState.None;
+                _moveDuration = 0;
+            }
+        }
+
+        public void StopMove()
+        {
+            _followCatchupFactor = 0;
+            MoveState = EMoveState.None;
+            _moveDuration = 0;
+            FollowTarget = null;
+            UpdateMovementState(null);
+        }
+
+        public void StopFollowMove()
+        {
+            _followCatchupFactor = 0;
+            _moveDuration = 0;
+            UpdateMovementState(null);
         }
 
         #endregion
 
         #region Follow
 
-        private Unit FollowTarget;
-        private int FollowMinDist;
-        private int FollowMaxDist;
-        private int FollowSpeed;
-        private eFormationType Formation = eFormationType.Line;
-
-        public List<UInt16> _Followers = new List<ushort>();
-
-        public void AddFollower(UInt16 Oid)
+        public Unit FollowTarget { get; private set; }
+        private long _nextFollowUpdate;
+        private int _minFollowTolerance, _maxFollowTolerance;
+        /// <summary>
+        /// Indicates that the unit should path to a spot on the far side of the unit (towed siege)
+        /// </summary>
+        private bool _pathThrough;
+        const int FOLLOW_PATH_UPDATE_INTERVAL = 500;
+        public int FollowReacquisitionInterval = 500;
+        
+        public void Follow(Unit followTarget, int minTolerance, int maxTolerance, bool pathThrough = false, bool ForceMove = false)
         {
-            if (!_Followers.Contains(Oid))
-                _Followers.Add(Oid);
-        }
-        public void RemoveFollower(UInt16 Oid)
-        {
-            _Followers.Remove(Oid);
-        }
-        public int GetFollowId(UInt16 Oid)
-        {
-            for (int i = 0; i < _Followers.Count; ++i)
-                if (_Followers[i] == Oid)
-                    return 1 + i;
-
-            return 0;
-        }
-        public float GetFollowPct(UInt16 Oid)
-        {
-            float Id = GetFollowId(Oid);
-            float Count = _Followers.Count;
-
-            return (Id / Count) * 100;
-        }
-
-        public virtual void FollowUnit(Unit Target, int MinDist, int MaxDist,int Speed, eFormationType Form)
-        {
-            if (Target == null || Target == FollowTarget)
-                return;
-
-            StopFollow();
-
-            Target.MvtInterface.AddFollower(_Owner.Oid);
-
-            FollowTarget = Target;
-            FollowMinDist = MinDist;
-            FollowMaxDist = MaxDist;
-            Formation = Form;
-            FollowSpeed = Speed;
-        }
-        public virtual void StopFollow()
-        {
-            if (FollowTarget != null)
-                FollowTarget.MvtInterface.RemoveFollower(_Owner.Oid);
-
-            CancelWalkTo();
-            FollowTarget = null;
-            FollowMinDist = 0;
-            FollowMaxDist = 0;
-        }
-        public virtual void StopFollow(Unit Unit)
-        {
-            if (FollowTarget == Unit)
-                StopFollow();
-        }
-        public virtual void UpdateFollow()
-        {
-            if (FollowTarget == null)
-                return;
-
-            if (CurrentSpeed != 0)
-                return;
-
-            float Pct = FollowTarget.MvtInterface.GetFollowPct(_Owner.Oid);
-            int Id = FollowTarget.MvtInterface.GetFollowId(_Owner.Oid);
-            int Dist = _Owner.GetDistanceTo(FollowTarget);
-            Point3D NewPos = new Point3D(0,0,0);
-            UInt16 NewHead = 0;
-
-            switch (Formation)
+            if (MovementSpeed == 0 && !ForceMove || _unit != null && _unit.IsDisabled && !ForceMove || _unit != null && _unit.IsStaggered && !ForceMove)
             {
-                case eFormationType.Line:
-                    {
-                    int MinDist = Id * FollowMinDist;
-                    int MaxDist = MinDist + (FollowMaxDist - FollowMinDist);
-
-                    if (!_Owner.IsObjectInFront(FollowTarget, 10))
-                        TurnTo(FollowTarget,true);
-
-                    if (Dist >= MaxDist)
-                    {
-                        Point2D Tp = FollowTarget.GetBackPoint(FollowTarget.Heading, MinDist);
-                        NewPos.X = Tp.X;
-                        NewPos.Y = Tp.Y;
-                        NewPos.Z = FollowTarget.Z;
-                    }
-
-                    break;
-                    }
-                case eFormationType.Protect:
-                    {
-                        if (!_Owner.IsObjectInFront(FollowTarget, 10))
-                            TurnTo(FollowTarget, true);
-
-                        if (Dist > FollowMaxDist)
-                        {
-                            Point2D Tp = FollowTarget.GetPointFromHeading((ushort)((float)4096 - ((float)4096 / (float)100 * Pct)), FollowMinDist);
-                            NewPos.X = Tp.X;
-                            NewPos.Y = Tp.Y;
-                            NewPos.Z = FollowTarget.Z;
-                        }
-                    }
-                    break;
+                StopFollowMove();
+                return;
             }
 
-            if (NewPos.X != 0 || NewPos.Y != 0 || NewPos.Z != 0)
-                WalkTo(NewPos, FollowSpeed);
-            else if (NewHead != 0)
-                TurnTo(NewHead, true);
-        }
-        public virtual bool IsFollowing()
-        {
-            return FollowTarget != null;
-        }
+            _pathThrough = pathThrough;
 
-
-        #endregion
-
-        // 82mètre,speed100 = 4920ms
-        public virtual int GetMsTimeToArriveAt(IPoint3D target, int speed)
-        {
-            return (int)(_Owner.GetDistanceTo(target) * (METRE_SPEED_MS / speed * 100f));
-        }
-
-        #region Move
-
-        public long MovementStart;
-        public int CurrentSpeed;
-        public float TickSpeedX;
-        public float TickSpeedY;
-        public float TickSpeedZ;
-
-        public virtual long MovementElapsedMs()
-        {
-            long Elapsed = TCPManager.GetTimeStampMS() - MovementStart;
-            return Elapsed;
-        }
-
-        public virtual void ArriveAtTarget()
-        {
-            if(CurrentSpeed != 0)
-                _Owner.SetPosition((UInt16)TargetPosition.X, (UInt16)TargetPosition.Y, (UInt16)TargetPosition.Z, _Owner.Heading, false);
-            CancelWalkTo();
-        }
-        public bool IsAtTargetPosition()
-        {
-            return (_Owner.X == TargetPosition.X && _Owner.Y == TargetPosition.Y && _Owner.Z == TargetPosition.Z);
-        }
-
-        protected void SetTickSpeed(float dx, float dy, float dz)
-        {
-            TickSpeedX = dx;
-            TickSpeedY = dy;
-            TickSpeedZ = dz;
-        }
-        protected void SetTickSpeed(float dx, float dy, float dz, int speed)
-        {
-            // dx pour chaque mètre, un mètre met 60ms au speed *100 soit : MS/(speed/100) = 60/1 = 60ms par mètre
-            float tickSpeed = (METRE_SPEED_MS / (float)speed) * 100f;
-            SetTickSpeed(dx / tickSpeed, dy / tickSpeed, dz / tickSpeed);
-        }
-        public virtual void UpdateTickSpeed()
-        {
-            if (TargetPosition.X != 0 || TargetPosition.Y != 0 || TargetPosition.Z != 0)
+            if (followTarget == FollowTarget && !ForceMove)
             {
-                float dist = StartPosition.GetDistanceTo(new Point3D(TargetPosition.X, TargetPosition.Y, TargetPosition.Z));
+                TurnTo(followTarget.WorldPosition);
+                return;
+            }
 
-                if (dist <= 0)
+            FollowTarget = followTarget;
+
+            _minFollowTolerance = minTolerance;
+            _maxFollowTolerance = maxTolerance;
+            _nextFollowUpdate = 0;
+
+            MoveState = EMoveState.Follow;
+
+            if (_unit.WorldPosition.IsWithinRadiusFeet(FollowTarget.WorldPosition, minTolerance))
+                TurnTo(FollowTarget.WorldPosition);
+        }
+
+        private readonly Point3D _destFollowPos = new Point3D();
+        private readonly Vector2 _toTarget = new Vector2();
+
+        private void UpdateFollow(long tick)
+        {
+
+            if (IsMoving)
+            { 
+                if (_unit.GetDistanceTo(FollowTarget) < _minFollowTolerance)
                 {
-                    SetTickSpeed(0, 0, 0);
+                    StopFollowMove();
+                    return;
+                }
+            }
+
+            if (MovementSpeed == 0 || _unit != null && _unit.IsDisabled || _unit != null && _unit.IsStaggered)
+            {
+                StopFollowMove();
+                return;
+            }
+
+            if (tick > _nextFollowUpdate)
+            {
+                // already within range
+                int distTo = _unit.GetDistanceTo(FollowTarget);
+
+                _followCatchupFactor = _pathThrough && distTo > _minFollowTolerance + 20 ? 20 : 0;
+
+                if (distTo < _maxFollowTolerance)
+                {
+                    _nextFollowUpdate = tick + FollowReacquisitionInterval;
+                    _unit.Heading = _unit.WorldPosition.GetHeading(FollowTarget.WorldPosition);
                     return;
                 }
 
-                float dx = (float)(TargetPosition.X - StartPosition.X) / dist;
-                float dy = (float)(TargetPosition.Y - StartPosition.Y) / dist;
-                float dz = (float)(TargetPosition.Z - StartPosition.Z) / dist;
+                _nextFollowUpdate = tick + FOLLOW_PATH_UPDATE_INTERVAL;
 
-                SetTickSpeed(dx, dy, dz, CurrentSpeed);
+                _destFollowPos.SetCoordsFrom(FollowTarget.WorldPosition);
+
+                _toTarget.X = _unit.WorldPosition.X - _destFollowPos.X;
+                _toTarget.Y = _unit.WorldPosition.Y - _destFollowPos.Y;
+
+                _toTarget.Normalize();
+
+                if (!_pathThrough || !FollowTarget.IsMoving)
+                {
+                    _destFollowPos.X += (int) (_toTarget.X * _minFollowTolerance*12);
+                    _destFollowPos.Y += (int) (_toTarget.Y * _minFollowTolerance*12);
+                }
+
+                else
+                {
+                    _destFollowPos.X -= (int)(_toTarget.X * _minFollowTolerance * 12);
+                    _destFollowPos.Y -= (int)(_toTarget.Y * _minFollowTolerance * 12);
+                }
+
+                Move(_destFollowPos);
             }
         }
-        private void StartArriveAtTargetAction(int requiredTicks)
-        {
-            _Owner.EvtInterface.AddEvent(ArriveAtTarget, requiredTicks, 1);
-        }
-
-        public virtual void WalkTo(int x, int y, int z, int speed)
-        {
-            if (speed <= 0 || !_Owner.GetUnit().CanMove())
-                return;
-
-            TargetPosition.X = x;
-            TargetPosition.Y = y;
-            TargetPosition.Z = z;
-
-            if (_Owner.IsWithinRadius(TargetPosition, CONST_WALKTOTOLERANCE))
-            {
-                _Owner.EvtInterface.Notify(EventName.ARRIVE_AT_TARGET, _Owner, null);
-                CancelWalkTo();
-                return;
-            }
-
-            TurnTo(_Owner.GetHeading(TargetPosition), false);
-
-            MovementStart = TCPManager.GetTimeStampMS();
-            CurrentSpeed = speed;
-
-            if (!_Owner.IsPlayer())
-                _Owner.IsMoving = true;
-            StartPosition.X = _Owner.X;
-            StartPosition.Y = _Owner.Y;
-            StartPosition.Z = _Owner.Z;
-
-            UpdateTickSpeed();
-            _Owner.EvtInterface.Notify(EventName.ON_WALK_TO, _Owner, null);
-            StartArriveAtTargetAction(GetMsTimeToArriveAt(TargetPosition, speed));
-            _Owner.GetUnit().StateDirty = true;
-        }
-
-        public virtual void WalkTo(IPoint3D target, int speed)
-        {
-            WalkTo(target.X, target.Y, target.Z, speed);
-        }
-        public virtual void Walk(short speed)
-        {
-            _Owner.EvtInterface.Notify(EventName.ON_WALK, _Owner, null);
-
-            CancelWalkTo();
-            TargetPosition.Clear();
-
-            CurrentSpeed = speed;
-
-            MovementStart = TCPManager.GetTimeStampMS();
-            UpdateTickSpeed();
-        }
-        public virtual void CancelWalkTo()
-        {
-            CurrentSpeed = 0;
-
-            if(!_Owner.IsPlayer())
-                _Owner.IsMoving = false;
-            _Owner.EvtInterface.RemoveEvent(ArriveAtTarget);
-            _Owner.Heading = TargetHeading;
-            _Owner.GetUnit().StateDirty = true;
-        }
-        public virtual void StopMoving()
-        {
-            CancelWalkTo();
-        }
-
-
 
         #endregion
+
+        #region Recall
+
+        private long _lastRecallMove;
+        private long _nextRecallSend;
+
+        public void Recall(Unit owner)
+        {
+            if (MovementSpeed == 0)
+                return;
+
+            _followCatchupFactor = 0;
+
+            FollowTarget = owner;
+
+            MoveState = EMoveState.Recall;
+            _lastRecallMove = TCPManager.GetTimeStampMS();
+            _nextRecallSend = TCPManager.GetTimeStampMS() + 10000;
+            UpdateMovementState(null);
+
+            _unit.AiInterface.Debugger?.SendClientMessage("[MR]: Recalling.");
+        }
+
+        // Recall state just moves the target repeatedly towards its owner without sending any state updates
+        // TODO: Move towards offset position (back-rear)
+        private void UpdateRecall(long tick)
+        {
+            long deltaMs = tick - _lastRecallMove;
+            _lastRecallMove = tick;
+
+            // Stationary pets should not perform any moves
+            if (MovementSpeed == 0)
+                return;
+
+            if (_nextRecallSend < tick)
+            {
+                _nextRecallSend = tick + 7500;
+                UpdateMovementState(null);
+            }
+
+            Vector2 destVect = new Vector2(_unit.WorldPosition.X - FollowTarget.WorldPosition.X, _unit.WorldPosition.Y - FollowTarget.WorldPosition.Y);
+
+            float distance = destVect.Magnitude;
+
+            // Within tolerance for recall move
+            if (distance < 60)
+            {
+                Pet pet = _unit as Pet;
+                if (pet != null && pet.IsHeeling)
+                {
+                    pet.IsHeeling = false;
+                    pet.AiInterface.Debugger?.SendClientMessage("[MR]: Successfully recalled. No longer ignoring enemies.");
+                }
+                return;
+            }
+
+            // Total time required to move fully towards the target
+            _moveDuration = (distance / _totalSpeed) * 1000;
+
+            // Lerp alpha is capped to 1, so the move will never overshoot the target
+            uint newWorldPosX = (uint)Point2D.Lerp(_unit.WorldPosition.X, FollowTarget.WorldPosition.X, GetMoveFactor(deltaMs));
+            uint newWorldPosY = (uint)Point2D.Lerp(_unit.WorldPosition.Y, FollowTarget.WorldPosition.Y, GetMoveFactor(deltaMs));
+
+            Zone_Info destZone = _unit.Region.GetZone((ushort)(newWorldPosX >> 12), (ushort)(newWorldPosY >> 12));
+
+            if (destZone == null)
+                return;
+
+            ushort pinX = _unit.Zone.CalculPin(newWorldPosX, true);
+            ushort pinY = _unit.Zone.CalculPin(newWorldPosY, false);
+            ushort pinZ = (ushort)Point2D.Lerp(_unit.WorldPosition.Z, FollowTarget.WorldPosition.Z, GetMoveFactor(deltaMs));
+
+            _unit.SetPosition(pinX, pinY, pinZ, _unit.Heading, destZone.ZoneId);
+        }
+
+        #endregion
+
+        private bool _forcePositionUpdate;
+
+        public void Teleport(Point3D destWorldPos)
+        {
+            Zone_Info destZone = _unit.Region.GetZone((ushort)(destWorldPos.X >> 12), (ushort)(destWorldPos.Y >> 12));
+
+            if (destZone == null)
+                return;
+
+            ushort pinX = _unit.Zone.CalculPin((uint)destWorldPos.X, true);
+            ushort pinY = _unit.Zone.CalculPin((uint)destWorldPos.Y, false);
+            ushort pinZ = (ushort)destWorldPos.Z;
+
+            _destWorldPos.SetCoordsFrom(destWorldPos);
+
+            _forcePositionUpdate = true;
+
+            _unit.SetPosition(pinX, pinY, pinZ, _unit.Heading, destZone.ZoneId);
+
+            UpdateMovementState(null);
+
+            _forcePositionUpdate = false;
+        }
+
+        public void UpdateMovementState(Player player)
+        {
+            if (_unit.Zone == null)
+            {
+                Log.Error("UpdateMovementState", $"{_unit.Name} with no Zone - pendingDisposal:{_unit.PendingDisposal} isDisposed:{_unit.IsDisposed}");
+                return;
+            }
+
+            PacketOut Out = new PacketOut((byte)Opcodes.F_OBJECT_STATE, 28);
+            WriteMovementState(Out);
+
+            if (player == null)
+                _unit.DispatchPacket(Out, false);
+            else
+                player.SendPacket(Out);
+
+        }
+
+        public void WriteMovementState(PacketOut Out)
+        {
+            if (_unit.Zone == null)
+            {
+                Log.Error("WriteMovementState", $"{_unit.Name} with no Zone - pendingDisposal:{_unit.PendingDisposal} isDisposed:{_unit.IsDisposed}");
+                return;
+            }
+            Out.WriteUInt16(_unit.Oid);
+            Out.WriteUInt16((ushort)_unit.X);
+            Out.WriteUInt16((ushort)_unit.Y);
+            Out.WriteUInt16((ushort)_unit.Z);
+            Out.WriteByte(_unit.PctHealth);
+
+            byte flags = 0;
+            if ((IsMoving && MovementSpeed > 0) || _forcePositionUpdate)
+                flags |= (byte)EObjectState.Moving;
+
+            if (MoveState == EMoveState.Recall)
+                flags |= (byte)EObjectState.Recall;
+            else if (FollowTarget != null)
+                flags |= (byte)EObjectState.LookingAt;
+
+            //TODO buggy movement in zones > 255 ?
+            if (_unit.Zone.ZoneId > 255)
+            {
+                flags = (byte)Utils.setBit(flags, 2, true);
+            }
+            
+            // flying  
+            if(_unit.IsCreature())
+            if ((Utils.getBit(_unit.Faction,5) || (Utils.getBit(_unit.GetCreature().Spawn.Proto.Faction, 5) &&  Utils.HasFlag(flags, (int)EObjectState.Moving))) && _unit.Z - ClientFileMgr.GetHeight(_unit.Zone.ZoneId, _unit.X, _unit.Y) > 50)
+                flags = (byte)Utils.setBit(flags, 5, true);
+                
+            Out.WriteByte(flags);
+            Out.WriteByte((byte)_unit.Zone.ZoneId);
+           
+
+            if (_unit is BuffHostObject)
+            {
+                Out.WriteByte(4); // Unk1
+                Out.WriteUInt32(3); // Unk2
+            }
+
+            else
+            {
+                Out.WriteByte(_forcePositionUpdate? (byte)6 : (byte)0);
+                Out.WriteUInt32(0);
+            }
+
+            if (Utils.HasFlag(flags, (int)EObjectState.Moving))
+            {
+                Out.WriteUInt16R((ushort)_totalSpeed);
+                Out.WriteByte(0); // DestUnk
+                Out.WriteUInt16R(_unit.Zone.CalculPin((uint)_destWorldPos.X, true));
+                Out.WriteUInt16R(_unit.Zone.CalculPin((uint)_destWorldPos.Y, false));
+                Out.WriteUInt16R((ushort)_destWorldPos.Z);
+                Out.WriteByte((byte)_destZoneId);
+            }
+            else
+                Out.WriteUInt16R(_unit.Heading);
+
+            if (Utils.HasFlag(flags, (int)EObjectState.LookingAt))
+                Out.WriteUInt16R(FollowTarget.Oid);
+
+        }
     }
 }

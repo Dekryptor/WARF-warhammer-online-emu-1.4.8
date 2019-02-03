@@ -19,6 +19,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 
@@ -29,15 +30,27 @@ namespace WorldServer
 {
     public class ClientDatas : IPacketHandler
     {
-        [PacketHandlerAttribute(PacketHandlerType.TCP, (int)Opcodes.F_CLIENT_DATA, 0, "F_CLIENT_DATA")]
-        static public void F_CLIENT_DATA(BaseClient client, PacketIn packet)
+        [PacketHandler(PacketHandlerType.TCP, (int)Opcodes.F_CLIENT_DATA, 0, "F_CLIENT_DATA")]
+        public static void F_CLIENT_DATA(BaseClient client, PacketIn packet)
         {
             GameClient cclient = client as GameClient;
-            //Log.Dump("FCLIENT", packet, true);
+
+            Player plr = cclient.Plr;
+
+            if (plr == null)
+                return;
+
+            ushort offset = packet.GetUint16();
+            ushort size = packet.GetUint16();
+
+            MemoryStream ms = new MemoryStream(plr.Info.ClientData.Data) {Position = offset};
+            ms.Write(packet.Read(size), 0, size);
+            plr.Info.ClientData.Dirty = true;
+            CharMgr.Database.SaveObject(plr.Info.ClientData);
         }
 
-        [PacketHandlerAttribute(PacketHandlerType.TCP, (int)Opcodes.F_UI_MOD, 0, "F_UI_MOD")]
-        static public void F_UI_MOD(BaseClient client, PacketIn packet)
+        [PacketHandler(PacketHandlerType.TCP, (int)Opcodes.F_UI_MOD, 0, "F_UI_MOD")]
+        public static void F_UI_MOD(BaseClient client, PacketIn packet)
         {
             GameClient cclient = client as GameClient;
             //Log.Dump("F_UI_MOD", packet, true);

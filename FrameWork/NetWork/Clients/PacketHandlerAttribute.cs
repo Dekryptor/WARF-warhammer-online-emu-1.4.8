@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,16 +30,14 @@ namespace FrameWork
     [AttributeUsage(AttributeTargets.Method)]
     public class PacketHandlerAttribute : Attribute
     {
-        protected PacketHandlerType m_type;
+        public PacketHandlerType Type { get; }
 
-        // Packet Opcode
-        protected int m_opcode;
-
-        // Packet Description
-        protected string m_desc;
+        public int Opcode { get; }
 
         // Client State level for handle this packet
-        protected int m_statelevel;
+        public int State { get; }
+
+        public string Description { get; }
 
         public PacketHandlerAttribute(PacketHandlerType type, int opcode, string desc)
             : this(type,opcode,0,desc)
@@ -49,44 +45,12 @@ namespace FrameWork
 
         }
 
-        public PacketHandlerAttribute(PacketHandlerType type, int opcode,int statelevel, string desc)
+        public PacketHandlerAttribute(PacketHandlerType type, int opcode, int statelevel, string desc)
         {
-            m_type = type;
-            m_opcode = opcode;
-            m_desc = desc;
-            m_statelevel = statelevel;
-        }
-
-        public PacketHandlerType Type
-        {
-            get
-            {
-                return m_type;
-            }
-        }
-
-        public int Opcode
-        {
-            get
-            {
-                return m_opcode;
-            }
-        }
-
-        public int State
-        {
-            get
-            {
-                return m_statelevel;
-            }
-        }
-
-        public string Description
-        {
-            get
-            {
-                return m_desc;
-            }
+            Type = type;
+            Opcode = opcode;
+            Description = desc;
+            State = statelevel;
         }
     }
 }

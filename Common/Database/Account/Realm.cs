@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -26,39 +7,34 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "realms", DatabaseName = "Accounts")]
+    [DataTable(PreCache = false, TableName = "realms", DatabaseName = "Accounts", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Realm : DataObject
     {
-        private byte _RealmId;
         private string _Name;
         private string _Language;
         private string _Adresse;
         private int _Port;
         public RpcClientInfo Info;
 
-        private string _Allow_trials = "1";
+        private string _Allow_trials = "0";
         private string _Charfxeravailable;
         private string _Legacy;
         private string _Bonus_destruction = "0";
         private string _Bonus_order = "0";
         private string _Redirect = "0";
-        private string _Region;
+        private string _Region = "STR_REGION_EUROPE";
         private string _Retired = "0";
         private string _Waiting_destruction = "0";
         private string _Waiting_order = "0";
         private string _Density_destruction = "0";
         private string _Density_order = "0";
-        private string _Openrvr;
-        private string _Rp;
+        private string _Openrvr = "1" ;
+        private string _Rp = "1";
         private string _Status = "0";
 
-        [DataElement(Unique = true)]
-        public byte RealmId
-        {
-            get { return _RealmId; }
-            set { _RealmId = value; }
-        }
+        [PrimaryKey]
+        public byte RealmId { get; set; }
 
         [DataElement(Varchar = 255)]
         public string Name
@@ -193,28 +169,39 @@ namespace Common
             set { _Status = value; Dirty = true; }
         }
 
-        [DataElement(AllowDbNull=false)]
-        public byte Online;
+        [DataElement(AllowDbNull = false)]
+        public byte Online { get; set; }
 
-        [DataElement()]
-        public DateTime OnlineDate;
+        [DataElement]
+        public DateTime OnlineDate { get; set; }
 
-        [DataElement()]
-        public uint OnlinePlayers;
+        [DataElement]
+        public uint OnlinePlayers { get; set; }
 
-        [DataElement()]
-        public uint OrderCount;
+        [DataElement]
+        public uint OrderCount { get; set; }
 
-        [DataElement()]
-        public uint DestructionCount;
+        [DataElement]
+        public uint DestructionCount { get; set; }
 
-        [DataElement()]
-        public uint MaxPlayers;
+        [DataElement]
+        public uint MaxPlayers { get; set; }
 
-        [DataElement()]
-        public uint OrderCharacters;
+        [DataElement]
+        public uint OrderCharacters { get; set; }
 
-        [DataElement()]
-        public uint DestruCharacters;
+        [DataElement]
+        public uint DestruCharacters { get; set; }
+
+        private long _nextRotationTime;
+
+        [DataElement]
+        public long NextRotationTime { get { return _nextRotationTime; } set { _nextRotationTime = value; Dirty = true; } }
+
+        [DataElement]
+        public string MasterPassword { get; set; }
+
+        [DataElement]
+        public int BootTime { get; set; }
     }
 }

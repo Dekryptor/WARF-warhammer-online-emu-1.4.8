@@ -1,300 +1,650 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
+﻿//#define NO_CREATURE
+
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 using Common;
 using FrameWork;
+using WorldServer.World.Battlefronts;
+using GameData;
+using WorldServer.World.Objects.PublicQuests;
+using WorldServer.Scenarios;
+using WorldServer.World.Battlefronts.Objectives;
+using Common.Database.World.Maps;
+using NLog;
+using WorldServer.Services.World;
+using WorldServer.World.Battlefronts.NewDawn;
 
 namespace WorldServer
 {
-    public class CellSpawns
-    {
-        UInt16 X,Y,RegionId;
-        public List<Creature_spawn> CreatureSpawns = new List<Creature_spawn>();
-        public List<GameObject_spawn> GameObjectSpawns = new List<GameObject_spawn>();
-        public List<Chapter_Info> ChapterSpawns = new List<Chapter_Info>();
-        public List<PQuest_Info> PublicQuests = new List<PQuest_Info>();
-
-        public CellSpawns(UInt16 RegionId,UInt16 X,UInt16 Y)
-        {
-            this.RegionId = RegionId;
-            this.X = X;
-            this.Y = Y;
-        }
-
-        public void AddSpawn(Creature_spawn Spawn)
-        {
-            CreatureSpawns.Add(Spawn);
-        }
-
-        public void AddSpawn(GameObject_spawn Spawn)
-        {
-            GameObjectSpawns.Add(Spawn);
-        }
-
-        public void AddChapter(Chapter_Info Chapter)
-        {
-            Chapter.OffX = X;
-            Chapter.OffY = Y;
-
-            ChapterSpawns.Add(Chapter);
-        }
-
-        public void AddPQuest(PQuest_Info PQuest)
-        {
-            PQuest.OffX = X;
-            PQuest.OffY = Y;
-
-            PublicQuests.Add(PQuest);
-        }
-    };
 
     public class RegionMgr
     {
-        static public int REGION_UPDATE_INTERVAL = 50; // 50 Ms entre chaque Update
-        static public int COLLECT_UPDATE_INTERVAL = 180000; // Toutes les 2 minutes;
-        static public UInt16 MAX_CELL_ID = 800;
-        static public UInt16 MAX_CELLS = 16;
-        static public int MAX_VISIBILITY_RANGE = 300; // 300 mètre de vue ?
+        private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
+        public static int RegionUpdateInterval = 50; // 50 ms between each update
+        public static ushort MaxCellID = 800;
+        public static ushort MaxCells = 16;
+        public static int MaxVisibilityRange = 400; // It was 400 on Age of Reckoning
 
-        public UInt16 RegionId;
-        public Thread _Updater;
-        public bool Running = true;
-        public long NextCollect = 0;
+        private long _lastRegionUpdate = TCPManager.GetTimeStampMS();
+
+        public ushort RegionId;
+        private readonly Thread _updater;
+        private bool _running = true;
         public List<Zone_Info> ZonesInfo;
+        public IBattlefront Bttlfront;
+        public NewDawnBattlefront ndbf;
+        public Scenario Scenario;
+        public string RegionName;
 
-        public RegionMgr(UInt16 RegionId, List<Zone_Info> Zones)
+        /// <summary>Races associated with the pairing, may be null</summary>
+        private readonly Races[] _races;
+
+        public RegionMgr(ushort regionId, List<Zone_Info> zones)
         {
-            this.RegionId = RegionId;
-            this.ZonesInfo = Zones;
+            RegionId = regionId;
+            ZonesInfo = zones;
 
             LoadSpawns();
 
-            ThreadStart Start = new ThreadStart(Update);
-            _Updater = new Thread(Start);
-            _Updater.Start();
+            if (Constants.DoomsdaySwitch == 2)
+            {
+                //switch (regionId)
+                //{
+                //    case 2:
+                //    case 4:
+                //    case 11: // This is T4
+                //        Bttlfront = new ProximityProgressingBattlefront(this, true);
+                //        break;
+                //    case 1: // t1 dw/gs
+                //    case 3: // t1 he/de
+                //    case 8: // t1 em/ch
+                // Bttlfront = new T1Battlefront(this, true);
+                //        break;
+                //    case 12: // T2
+                //        Bttlfront = new T1Battlefront(this, true);
+                //        break;
+                //    case 14: // T2
+                //        Bttlfront = new T1Battlefront(this, true);
+                //        break;
+                //    case 15: // T2
+                //        Bttlfront = new T1Battlefront(this, true);
+                //        break;
+                //    case 6:  // T3
+                //        Bttlfront = new T1Battlefront(this, true);
+                //        break;
+                //    case 10: // T3
+                //        Bttlfront = new T1Battlefront(this, true);
+                //        break;
+                //    case 16: // T3
+                //        Bttlfront = new T1Battlefront(this, true);
+                //        break;
+                //    default: // Everything else...
+                //        Bttlfront = new ProximityBattlefront(this, false);
+                //        break;
+                //}
+
+                switch (regionId)
+                {
+                    case 1: // t1 dw/gs
+                    case 3: // t1 he/de
+                    case 8: // t1 em/ch
+                        ndbf = new NewDawnBattlefront(this, new List<BattlefrontObjective>(), new HashSet<Player>(), WorldMgr.LowerTierBattlefrontManager);
+                        break;
+                    default: // Everything else...
+                        ndbf = new NewDawnBattlefront(this, new List<BattlefrontObjective>(), new HashSet<Player>(), WorldMgr.UpperTierBattlefrontManager);
+                        break;
+                }
+            }
+            else
+            {
+                //switch (regionId)
+                //{
+                //    case 2:
+                //    case 4:
+                //    case 11: // This is T4
+                //        Bttlfront = new ProgressingBattlefront(this, true);
+                //        break;
+                //    case 1: // t1 dw/gs
+                //    case 3: // t1 he/de
+                //    case 8: // t1 em/ch
+                //        Bttlfront = new T1Battlefront(this, true);
+                //        break;
+                //    case 12: // T2
+                //    case 14: // T2
+                //    case 15: // T2
+                //    case 6:  // T3
+                //    case 10: // T3
+                //    case 16: // T3
+                //        Bttlfront = new Battlefront(this, zones.First().Type == 0);
+                //        break;
+                //    default: // Everything else...
+                //        Bttlfront = new Battlefront(this, false);
+                //        break;
+                //}
+            }
+
+            switch (ZonesInfo[0].Pairing)
+            {
+                case (byte)Pairing.PAIRING_GREENSKIN_DWARVES:
+                    _races = new Races[] { Races.RACES_DWARF, Races.RACES_GOBLIN };
+                    break;
+                case (byte)Pairing.PAIRING_EMPIRE_CHAOS:
+                    _races = new Races[] { Races.RACES_EMPIRE, Races.RACES_CHAOS };
+                    break;
+                case (byte)Pairing.PAIRING_ELVES_DARKELVES:
+                    _races = new Races[] { Races.RACES_HIGH_ELF, Races.RACES_DARK_ELF };
+                    break;
+                default:
+                    break;
+            }
+
+            _updater = new Thread(Update);
+            _updater.Start();
+        }
+
+        public string GetBattleFrontStatus()
+        {
+            var activePairing = this.ndbf.BattleFrontManager.GetActivePairing();
+
+            return $"Victory Points Progress for {activePairing.PairingName} : {this.ndbf.VictoryPointProgress.ToString()}";
+
         }
 
         public void Stop()
         {
             try
             {
-                Log.Success("RegionMgr", "[" + RegionId + "] Stop");
-                Running = false;
+                Log.Debug("RegionMgr", "[" + RegionId + "] Stop");
+                _running = false;
 
-                for (int i = 0; i < ZonesMgr.Count; ++i)
-                    ZonesMgr[i].Stop();
-
-                foreach (Object Obj in _Objects)
-                    if (Obj != null && !Obj.IsDisposed)
-                        Obj.Dispose();
+                foreach (ZoneMgr zone in ZonesMgr)
+                    zone.Stop();
             }
-            catch
+            catch (Exception e)
             {
-
+                Log.Error("Region " + RegionId + " Stop", e.ToString());
             }
         }
 
-        public Zone_Info GetZone_Info(UInt16 ZoneId)
+        /// <summary>
+        /// Returns the zone entity of given identifier.
+        /// </summary>
+        /// <param name="zoneId">Identifier of the searched zone</param>
+        /// <returns>Zone or null if does not exists</returns>
+        public Zone_Info GetZone_Info(ushort zoneId)
         {
-            return ZonesInfo.Find(zone => zone != null && zone.ZoneId == ZoneId);
+            foreach (Zone_Info zone in ZonesInfo)
+            {
+                if (zone != null && zone.ZoneId == zoneId)
+                    return zone;
+            }
+            return null;
         }
-        public Zone_Info GetZone(UInt16 OffX, UInt16 OffY)
+        public Zone_Info GetZone(ushort offX, ushort offY)
         {
             return ZonesInfo.Find(zone => zone != null &&
-                (zone.OffX <= OffX && zone.OffX + MAX_CELLS > OffX) &&
-                (zone.OffY <= OffY && zone.OffY + MAX_CELLS > OffY));
+                (zone.OffX <= offX && zone.OffX + MaxCells > offX) &&
+                (zone.OffY <= offY && zone.OffY + MaxCells > offY));
+        }
+
+        public int GetTier()
+        {
+            if (Scenario != null)
+                return Scenario.Tier;
+            if (ZonesInfo.Count > 0)
+                return ZonesInfo[0].Tier;
+            return 4;
         }
 
         #region ZoneMgr
 
         public List<ZoneMgr> ZonesMgr = new List<ZoneMgr>();
-        public ZoneMgr GetZoneMgr(UInt16 ZoneId,bool Create)
-        {
-            Zone_Info Info = GetZone_Info(ZoneId);
-            if(Info == null) return null;
 
-            ZoneMgr Mgr = null;
-            lock (ZonesMgr)
+        /// <summary>
+        /// Gets the zone of given id, lazy loading it if necessary.
+        /// </summary>
+        /// <param name="zoneId">Id of the zone to get</param>
+        /// <returns>Zone or null if zone info does not exists</returns>
+        public ZoneMgr GetZoneMgr(ushort zoneId)
+        {
+            Zone_Info info = GetZone_Info(zoneId);
+            if (info == null)
+                return null;
+
+            ZoneMgr mgr = null;
+            foreach (ZoneMgr z in ZonesMgr)
             {
-                Mgr = ZonesMgr.Find(zone => zone != null && zone.Info.ZoneId == ZoneId);
-                if (Mgr == null && Create) // Si la zone n'a pas encore été lancée
+                if (z != null && z.Info.ZoneId == zoneId)
                 {
-                    Mgr = new ZoneMgr(this, Info);
-                    ZonesMgr.Add(Mgr);
+                    mgr = z;
+                    break;
                 }
             }
 
-            return Mgr;
-        }
-        public void CheckZone(Object Obj)
-        {
-            Zone_Info Info = GetZone(Obj.XOffset, Obj.YOffset);
-            if (Info != null && Info != Obj.Zone.Info)
-                AddObject(Obj, Info.ZoneId);
-
-            CellMgr CurCell = Obj._Cell;
-            CellMgr NewCell = GetCell(Obj.XOffset, Obj.YOffset);
-
-            if (NewCell != null && NewCell != CurCell)
+            if (mgr == null)
             {
-                if(CurCell != null) // Si l'objet est sur un cell, on le supprime
-                    CurCell.RemoveObject(Obj);
-
-                NewCell.AddObject(Obj); // On l'ajoute dans le nouveau cell
+                mgr = new ZoneMgr(this, info);
+                ZonesMgr.Add(mgr);
             }
+
+            return mgr;
         }
+
+        public ushort CheckZone(Object obj)
+        {
+            Zone_Info info = GetZone(obj.XOffset, obj.YOffset);
+            if (info != null && info != obj.Zone.Info)
+            {
+                AddObject(obj, info.ZoneId);
+            }
+
+            CellMgr curCell = obj._Cell;
+            CellMgr newCell = GetCell(obj.XOffset, obj.YOffset);
+
+            if (newCell == null || newCell == curCell)
+                return info?.ZoneId ?? 0;
+
+            curCell?.RemoveObject(obj);
+            newCell.AddObject(obj); // On l'ajoute dans le nouveau cell
+
+            return info?.ZoneId ?? 0;
+        }
+
         public void Update()
         {
-            while (Running)
+            while (_running)
             {
-                long Start = TCPManager.GetTimeStampMS();
+                long start = TCPManager.GetTimeStampMS();
+
+                if (start - _lastRegionUpdate > 500)
+                    Log.Error("RegionMgr", "[" + RegionId + "] - Region inter-update period too long - took " + (start - _lastRegionUpdate) + " ms.");
+
+                else if (start - _lastRegionUpdate > 250)
+                    Log.Notice("RegionMgr", "[" + RegionId + "] - Region inter-update period too long - took " + (start - _lastRegionUpdate) + " ms.");
 
                 try
                 {
-                    WorldMgr.UpdateScripts(Start);
+                    WorldMgr.UpdateScripts(start);
 
-                    int i = 0;
-                    lock (ZonesMgr)
+                    AddNewObjects();
+
+                    RemoveOldObjects();
+
+                    UpdateActors(start);
+
+                    //Bttlfront?.Update(start);
+                    ndbf?.Update(start);
+                }
+
+                catch (Exception e)
+                {
+                    Log.Error("Error", e.ToString());
+                }
+
+                long elapsed = TCPManager.GetTimeStampMS() - start;
+
+                _lastRegionUpdate = TCPManager.GetTimeStampMS();
+
+                if (elapsed < RegionUpdateInterval)
+                    Thread.Sleep((int)(RegionUpdateInterval - elapsed));
+                else
+                {
+                    if (elapsed > 500)
+                        Log.Error("RegionMgr", "[" + RegionId + "] - Region update took too long. " + GetObjects() + " objects. " + elapsed + "ms.");
+                    else if (elapsed > 250)
+                        Log.Notice("RegionMgr", "[" + RegionId + "] - Region update took too long. " + GetObjects() + " objects. " + elapsed + "ms.");
+
+                }
+            }
+
+            DisposeActors();
+        }
+
+        /// <summary>
+        /// A list of players currently within this region. Should only be accessed from within this region's thread!
+        /// </summary>
+        public readonly List<Player> Players = new List<Player>();
+
+        private void AddNewObjects()
+        {
+            try
+            {
+                lock (_objectsToAdd)
+                {
+                    foreach (ObjectAdd obj in _objectsToAdd)
                     {
-                        for (; i < ZonesMgr.Count; ++i)
+                        var plr = obj.Obj as Player;
+
+                        if (obj.Obj.Region != this)
                         {
-                            ZonesMgr[i].Run(Start);
+                            if (obj.Obj.Region != null)
+                                obj.Obj.Region.RemoveObject(obj.Obj);
+
+                            GenerateOid(obj.Obj);
+
+                            if (plr != null)
+                            {
+                                plr.InRegionChange = true;
+                                if (!Players.Contains(plr))
+                                    Players.Add(plr);
+                            }
                         }
+
+                        else
+                            obj.Obj.Zone.RemoveObject(obj.Obj);
+
+                        ZoneMgr mgr = GetZoneMgr(obj.ZoneId);
+                        mgr.AddObject(obj.Obj);
+
+                        if (obj.MustUpdateRange)
+                            UpdateRange(obj.Obj);
+
+                        if (plr != null)
+                        {
+                            //Bttlfront?.SendObjectives(plr);
+
+                            ndbf?.SendObjectives(plr);
+                            WorldMgr.SendCampaignStatus(plr);
+                        }
+                    }
+                    _objectsToAdd.Clear();
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Error("AddNewObjects", e.ToString());
+            }
+        }
+
+        private void RemoveOldObjects()
+        {
+            try
+            {
+                lock (_objectsToRemove)
+                {
+                    foreach (ObjectRemove removeInfo in _objectsToRemove)
+                    {
+                        removeInfo.Obj.InRegionChange = false;
+                        removeInfo.Obj.ClearRange();
+
+                        if (removeInfo.Cell != null)
+                            removeInfo.Cell.RemoveObject(removeInfo.Obj);
+
+                        if (removeInfo.Zone != null)
+                            removeInfo.Zone.RemoveObject(removeInfo.Obj);
+
+                        if (removeInfo.Oid != 0)
+                        {
+                            if (Objects[removeInfo.Oid] != null && Objects[removeInfo.Oid] == removeInfo.Obj)
+                            {
+                                Objects[removeInfo.Oid] = null;
+
+                                /*
+                                    Player Oid could previously be zeroed after another region had set it. 
+                                    If this were to happen, NPC mounts in the zone would display 
+                                    the player's name, title and guild, and the player's mount would not display.
+                                */
+                                if (removeInfo.Obj.Oid == removeInfo.Oid && removeInfo.Zone == removeInfo.Obj.Zone)
+                                    removeInfo.Obj.ZeroOid(removeInfo.Oid);
+                            }
+                        }
+
+                        if (removeInfo.Obj is Player)
+                            Players.Remove((Player)removeInfo.Obj);
+
+                    }
+                    _objectsToRemove.Clear();
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Error("RemoveOldObjects", e.ToString());
+            }
+        }
+
+        private void UpdateActors(long start)
+        {
+            
+            for (int i = 0; i < Objects.Length; ++i)
+            {
+                Object obj = Objects[i];
+                if (obj == null || obj.Region != this)
+                    continue;
+
+                try
+                {
+                    if (!obj.Loaded)
+                        obj.Load();
+                    else
+                    {
+                        if (obj.IsDisposed)
+                            RemoveObject(obj);
+                        else
+                            obj.Update(start);
                     }
                 }
                 catch (Exception e)
                 {
-                    Log.Error("Erreur", e.ToString());
-                }
+                    Log.Error("EXCEPTION: " + obj.Name + " in Region " + RegionId, e.ToString());
 
-                /*if (NextCollect <= Start)
-                {
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
-                    NextCollect = Start + COLLECT_UPDATE_INTERVAL;
-                }*/
+                    if (obj is Player)
+                        ((Player)obj).SendClientMessage(e.GetType().Name + " was thrown from " + e.TargetSite?.Name + ".");
+                    else if (obj is IBattlefrontFlag)
+                    {
+                        try
+                        {
+                            foreach (Player player in Players)
+                                player.SendClientMessage(e.GetType().Name + " from " + e.TargetSite?.Name + " was thrown from a Battlefield Objective in this region.");
+                        }
+                        catch (Exception)
+                        {
+                            Log.Error("RegionMgr", "Exception throw within Player exception notification");
+                        }
+                    }
 
-                long Elapsed = TCPManager.GetTimeStampMS() - Start;
-                if (Elapsed < REGION_UPDATE_INTERVAL)
-                    Thread.Sleep((int)(REGION_UPDATE_INTERVAL - Elapsed));
-                else
-                {
-                    Log.Debug("RegionMgr", "[" + RegionId + "] La region lag, " + GetObjects() + " objets! " + Elapsed +"ms");
+                    else
+                    {
+                        obj.Say(e.GetType().Name + " was thrown from " + e.TargetSite?.Name + ". This object will be destroyed.");
+                        Log.Error("Unhandled Exception", obj.Name + " has been removed from the region.");
+                        obj.Dispose();
+                        RemoveObject(obj);
+                    }
                 }
             }
         }
+
+        private void DisposeActors()
+        {
+            RemoveOldObjects();
+
+            for (int i = 0; i < Objects.Length; ++i)
+            {
+                Object obj = Objects[i];
+
+                if (obj == null || obj.Region != this)
+                    continue;
+
+                try
+                {
+                    if (!obj.IsDisposed)
+                        obj.Dispose();
+                }
+                catch (Exception e)
+                {
+                    Log.Error("Zone Disposal", e.ToString());
+                }
+            }
+        }
+
+        /// <summary>
+        /// Checks whether the region matches the given race.
+        /// </summary>
+        /// <param name="race">Race to check</param>
+        /// <returns>True if matchs, false otherwise</returns>
+        public bool Matches(Races race)
+        {
+            return _races != null && (_races[0] == race || _races[1] == race);
+        }
+
+        #region Diagnostic
+        public void CountObjects(Player plr)
+        {
+            Dictionary<string, int> objectCounts = new Dictionary<string, int>();
+
+            foreach (Object obj in Objects)
+            {
+                if (obj == null)
+                    continue;
+                string type = obj.GetType().ToString();
+
+                if (objectCounts.ContainsKey(type))
+                    objectCounts[type]++;
+                else objectCounts.Add(type, 1);
+            }
+
+            plr.SendClientMessage("Object count for current region:");
+            foreach (var entry in objectCounts)
+                plr.SendClientMessage(entry.Key + " " + entry.Value);
+        }
+        #endregion
 
         #endregion
 
         #region Ranged
 
-        public delegate void RangedObjectDelegate(Object Obj);
+        public delegate void RangedObjectDelegate(Object obj);
 
-        public void GetRangedObject(Object Obj, int Range, RangedObjectDelegate RangeFunction)
+        public void GetRangedObject(Object obj, int range, RangedObjectDelegate rangeFunction)
         {
-            if (!Obj.IsInWorld())
+            if (!obj.IsInWorld())
                 return;
 
-            GetCells(Obj.XOffset, Obj.YOffset, Range, (CellMgr Cell) =>
+            GetCells(obj.XOffset, obj.YOffset, range, cell =>
             {
-                Object DistObject = null;
-                for(int i=0;i<Cell._Objects.Count;++i)
+                for (int i = 0; i < cell.Objects.Count; ++i)
                 {
-                    if ((DistObject = Cell._Objects[i]) == null)
+                    Object distObject;
+                    if ((distObject = cell.Objects[i]) == null)
                     {
-                        Cell._Objects.RemoveAt(i);
+                        cell.Objects.RemoveAt(i);
                         i--;
                     }
-                    else if (Obj.GetDistance(DistObject) <= MAX_VISIBILITY_RANGE)
-                        RangeFunction(DistObject);
+                    else if (obj.Get2DDistanceToObject(distObject) <= MaxVisibilityRange)
+                        rangeFunction(distObject);
                 }
             });
         }
-
-        static public bool IsRange(int fixe, int move, int range)
+        public static bool IsRange(int fixe, int move, int range)
         {
-            int Max = fixe + range;
-            int Min = fixe - range;
+            int max = fixe + range;
+            int min = fixe - range;
 
-            if (move > Max || move < Min)
+            if (move > max || move < min)
                 return false;
 
             return true;
         }
 
-        public bool UpdateRange(Object CurObj, bool ForceUpdate = false)
+        public void DispatchPacket(PacketOut packet, Point3D point, int radius, Func<Player, bool> predicate = null)
         {
-            if (CurObj.IsActive == false || CurObj.IsDisposed)
-                return false;
-
-            if (CurObj.X == 0 && CurObj.Y == 0)
-                return false;
-
-            float Distance = CurObj.GetDistance(CurObj.LastRangeCheck);
-            if (Distance > 100 || ForceUpdate)
+            foreach (var player in WorldQuery<Player>(point, radius, predicate))
             {
-                CurObj.LastRangeCheck.X = CurObj.X;
-                CurObj.LastRangeCheck.Y = CurObj.Y;
+                player.DispatchPacket(packet, true);
             }
-            else 
+        }
+
+        public List<T> WorldQuery<T>(Point3D point, int radius, Func<T, bool> predicate = null) where T : Object
+        {
+            var list = new List<T>();
+
+            int aradius = radius * Point2D.UNITS_TO_FEET;
+            int count = 0;
+            foreach (var zone in ZonesInfo.ToList())
+            {
+                var mapX = zone.OffX << 12;
+                var mapY = zone.OffY << 12;
+
+                if (point.X - aradius >= mapX && point.X + aradius <= mapX + 0xFFFF &&
+                    point.Y - aradius >= mapY && point.Y + aradius <= mapY + 0xFFFF) //is the point on this zone?
+                {
+                    ushort offX = (ushort)Math.Truncate((decimal)((point.X - mapX) / 4096 + zone.OffX));
+                    ushort offY = (ushort)Math.Truncate((decimal)((point.Y - mapY) / 4096 + zone.OffY));
+
+                    for (int x = offX - 1; x < offX + 1; x++) //scan all cells within radius
+                        for (int y = offY - 1; y < offY + 1; y++)
+                        {
+                            if (x >= 0 && x <= MaxCellID && y >= 0 && y <= MaxCellID)
+                                if (Cells[x, y] != null)
+                                    foreach (var obj in Cells[x, y].Objects.ToList())
+                                    {
+                                        count++;
+                                        if (obj is T && obj.PointWithinRadiusFeet(point, radius) && !list.Contains(obj))
+                                            list.Add((T)obj);
+                                    }
+                        }
+                }
+
+            }
+            if (predicate != null)
+                return list.Where(predicate).ToList();
+            return list;
+        }
+
+
+        public bool UpdateRange(Object curObj, bool forceUpdate = false)
+        {
+            if (!curObj.IsActive || curObj.IsDisposed)
                 return false;
 
+            if (curObj.X == 0 && curObj.Y == 0)
+                return false;
 
-            CurObj.OnRangeUpdate();
+            float distance = curObj.Get2DDistanceToWorldPoint(curObj.LastRangeCheck);
+            if (distance > 100 || forceUpdate)
+            {
+                curObj.LastRangeCheck.X = curObj.WorldPosition.X;
+                curObj.LastRangeCheck.Y = curObj.WorldPosition.Y;
+            }
+            else
+                return false;
 
-            GetRangedObject(CurObj, 1, (Object DistObj) =>
+            curObj.OnRangeUpdate();
+
+            GetRangedObject(curObj, 1, distObj =>
                 {
-                    if (DistObj == null)
+                    if (distObj == null)
                         return;
 
-                    if (IsVisibleBForA(CurObj, DistObj) && !CurObj.HasInRange(DistObj))
+                    if (IsVisibleBForA(curObj, distObj) && !curObj.HasInRange(distObj))
                     {
-                        CurObj.AddInRange(DistObj);
-                        DistObj.AddInRange(CurObj);
+                        curObj.AddInRange(distObj);
+                        distObj.AddInRange(curObj);
 
-                        if (CurObj.IsPlayer())
-                            DistObj.SendMeTo(CurObj.GetPlayer());
+                        if (curObj.IsPlayer())
+                            distObj.SendMeTo(curObj.GetPlayer());
 
-                        if (DistObj.IsPlayer())
-                            CurObj.SendMeTo(DistObj.GetPlayer());
+                        if (distObj.IsPlayer())
+                            curObj.SendMeTo(distObj.GetPlayer());
                     }
                 });
 
             Object dist;
-            for (int i = 0; i < CurObj._ObjectRanged.Count; ++i)
+
+            for (int i = 0; i < curObj.ObjectsInRange.Count; ++i)
             {
-                if ((dist = CurObj._ObjectRanged[i]) == null)
+                if ((dist = curObj.ObjectsInRange[i]) == null)
                     continue;
 
-                if (CurObj == null || dist == null)
-                    continue;
-
-                if (dist.GetDistance(CurObj) > MAX_VISIBILITY_RANGE || !IsVisibleBForA(CurObj, dist))
+                if (dist.Get2DDistanceToObject(curObj) > MaxVisibilityRange || !IsVisibleBForA(curObj, dist))
                 {
-                    CurObj.RemoveInRange(dist);
-                    dist.RemoveInRange(CurObj);
+                    curObj.RemoveInRange(dist);
+                    dist.RemoveInRange(curObj);
                     i--;
                 }
             }
@@ -302,15 +652,15 @@ namespace WorldServer
             return true;
         }
 
-        public bool IsVisibleBForA(Object A, Object B)
+        public bool IsVisibleBForA(Object a, Object b)
         {
-            if (A == null || B == null || A.IsDisposed || B.IsDisposed)
+            if (a == null || b == null || a.IsDisposed || b.IsDisposed)
                 return false;
 
-            if (A == B || !A.IsActive || !B.IsActive || !B.IsVisible)
+            if (a == b || !a.IsActive || !b.IsActive || !b.IsVisible)
                 return false;
 
-            if (B.IsPlayer() && (B.GetPlayer().Client == null && !B.GetPlayer().Client.IsPlaying()))
+            if (b.IsPlayer() && (b.GetPlayer().Client == null || !b.GetPlayer().Client.IsPlaying()))
                 return false;
 
             return true;
@@ -320,242 +670,270 @@ namespace WorldServer
 
         #region Oid
 
-        static public UInt16 MAX_OBJECTS = 65000;
-        static public UInt16 MaxOID = 2;
-        public Object[] _Objects = new Object[MAX_OBJECTS];
-        public void GenerateOid(Object Obj)
+        public static ushort MaxObjects = 65000;
+        public static ushort MaxOid = 2;
+        public Object[] Objects = new Object[MaxObjects];
+        public Dictionary<uint, PublicQuest> PublicQuests = new Dictionary<uint, PublicQuest>();
+        private List<ObjectAdd> _objectsToAdd = new List<ObjectAdd>();
+        private List<ObjectRemove> _objectsToRemove = new List<ObjectRemove>();
+
+        public void GenerateOid(Object obj)
         {
-            lock (_Objects)
-            {
-                ushort Oid = GetOid();
-                Obj.Oid = Oid;
-                Obj._Loaded = false;
-                _Objects[Oid] = Obj;
-            }
+            ushort oid = GetOid();
+            Objects[oid] = obj;
+
+            obj.SetOid(oid);
+            obj.Loaded = false;
         }
 
         public ushort GetOid()
         {
-            for (int i = MaxOID; i < MAX_OBJECTS; ++i)
+            for (int i = MaxOid; i < MaxObjects; ++i)
             {
-                if (MaxOID >= MAX_OBJECTS - 1)
+                if (MaxOid >= MaxObjects - 1)
                 {
-                    MaxOID = 2;
+                    MaxOid = 2;
                     i = 2;
                 }
 
-                if (_Objects[i] == null)
+                if (Objects[i] == null)
                 {
-                    MaxOID = (ushort)i;
+                    MaxOid = (ushort)i;
                     return (ushort)i;
                 }
             }
 
-            return MaxOID;
+            return MaxOid;
         }
 
-        public bool AddObject(Object Obj, UInt16 ZoneId, bool MustUpdateRange = false)
+        public struct ObjectAdd
         {
-            Zone_Info Info = GetZone_Info(ZoneId);
-            if (Info == null)
+            public Object Obj;
+            public ushort ZoneId;
+            public bool MustUpdateRange;
+        }
+
+        public bool AddObject(Object obj, ushort zoneId, bool mustUpdateRange = false)
+        {
+            Zone_Info info = GetZone_Info(zoneId);
+            if (info == null)
             {
-                Log.Error("RegionMgr", "Invalid Zone Id : " + ZoneId);
+                Log.Error("RegionMgr", "AddObject: Unable to add object " + obj.Name + " to invalid Zone with ID : " + zoneId);
                 return false;
             }
 
-            if (Obj.Region == null || (Obj.Region != null && Obj.Region != this))
+            ObjectAdd add = new ObjectAdd
             {
-                if(Obj.Region != null)
-                    Obj.Region.RemoveObject(Obj);
+                Obj = obj,
+                ZoneId = zoneId,
+                MustUpdateRange = mustUpdateRange
+            };
 
-                GenerateOid(Obj);
-            }
+            //obj.MovementZone = GetZoneMgr(zoneId);
 
-            ZoneMgr Mgr = GetZoneMgr(ZoneId, true);
-            Mgr.AddObject(Obj);
-
-            if (MustUpdateRange)
-                UpdateRange(Obj);
+            lock (_objectsToAdd)
+                _objectsToAdd.Add(add);
 
             return true;
         }
-        public bool RemoveObject(Object Obj)
+
+        public struct ObjectRemove
         {
-            if(Obj.IsPlayer())
-                Log.Success("RemoveObject", Obj.Name);
+            public Object Obj;
+            public ushort Oid;
+            public ZoneMgr Zone;
+            public CellMgr Cell;
+        }
 
-            Obj.ClearRange();
+        public bool RemoveObject(Object obj)
+        {
+            //if (Obj.IsPlayer())
+            //    Log.Success("RemoveObject", Obj.Name);
 
-            if (Obj._Cell != null)
-                Obj._Cell.RemoveObject(Obj);
+            obj.EvtInterface.Notify(EventName.OnRemoveFromWorld, obj, null);
 
-            if (Obj.Zone != null)
-                Obj.Zone.RemoveObject(Obj);
-
-            if (Obj.Oid != 0)
+            ObjectRemove rem = new ObjectRemove
             {
-                lock (_Objects)
-                    if (_Objects[Obj.Oid] != null && _Objects[Obj.Oid] == Obj)
-                    {
-                        _Objects[Obj.Oid] = null;
-                        Obj.Oid = 0;
-                        return true;
-                    }
-            }
+                Obj = obj,
+                Oid = obj.Oid,
+                Zone = obj.Zone,
+                Cell = obj._Cell
+            };
+
+            lock (_objectsToRemove)
+                _objectsToRemove.Add(rem);
 
             return false;
         }
-        public Object GetObject(UInt16 Oid)
+
+        public Object GetObject(ushort oid)
         {
-            if (Oid == 0)
+            if (oid < 2 || oid >= Objects.Length)
                 return null;
 
-            if (Oid >= _Objects.Length)
-                return null;
-            if (Oid < 2)
+            Object obj = Objects[oid];
+
+            if (obj == null || obj.IsDisposed)
                 return null;
 
-            lock (_Objects)
-            {
-                Object Obj = _Objects[Oid];
-                if (Obj != null && Obj.IsDisposed)
-                    return null;
-
-                return Obj;
-            }
+            return obj;
         }
-        public Player GetPlayer(UInt16 Oid)
-        {
-            Object Obj = GetObject(Oid);
-            if (Obj == null || !Obj.IsPlayer())
-                return null;
 
-            return Obj.GetPlayer();
-        }
-        public UInt16 GetObjects()
+        public Player GetPlayer(ushort oid)
         {
-            return (UInt16)_Objects.ToList().Count(obj => obj != null);
+            return (GetObject(oid) as Player);
+        }
+        public ushort GetObjects()
+        {
+            return (ushort)Objects.Count(obj => obj != null);
+        }
+
+        public List<T> GetObjects<T>() where T : Object
+        {
+            return Objects.Where(obj => obj != null && obj is T).Select(e => (T)e).ToList();
         }
 
         #endregion
 
         #region Cells
 
-        public CellMgr[,] _Cells = new CellMgr[MAX_CELL_ID, MAX_CELL_ID];
-        public delegate void GetCellDelegate(CellMgr Cell);
+        public CellMgr[,] Cells = new CellMgr[MaxCellID, MaxCellID];
+        public delegate void GetCellDelegate(CellMgr cell);
 
-        public CellMgr GetCell(UInt16 X, UInt16 Y)
+        public CellMgr GetCell(ushort x, ushort y)
         {
-            if (X >= MAX_CELL_ID) X = (UInt16)(MAX_CELL_ID - 1);
-            if (Y >= MAX_CELL_ID) Y = (UInt16)(MAX_CELL_ID - 1);
+            if (x >= MaxCellID) x = (ushort)(MaxCellID - 1);
+            if (y >= MaxCellID) y = (ushort)(MaxCellID - 1);
 
-            if (_Cells[X,Y] == null)
-                _Cells[X, Y] = new CellMgr(this, X, Y);
-
-            return _Cells[X, Y];
+            return Cells[x, y] ?? (Cells[x, y] = new CellMgr(this, x, y));
         }
-        public void LoadCells(UInt16 X, UInt16 Y,int Range)
+        public void LoadCells(ushort x, ushort y, int range)
         {
-            GetCells(X, Y, Range, (CellMgr Cell) => { if (Cell != null) Cell.Load(); });
+            GetCells(x, y, range, cell =>
+            {
+                cell?.Load();
+            });
         }
-        public void GetCells(UInt16 X, UInt16 Y, int Range, GetCellDelegate CellFunction)
+        public void GetCells(ushort x, ushort y, int range, GetCellDelegate cellFunction)
         {
-            if (CellFunction == null)
+            if (cellFunction == null)
                 return;
 
-            UInt16 MinX = (ushort)Math.Max(0, (int)(X - Range));
-            UInt16 MaxX = (ushort)Math.Min((int)(MAX_CELL_ID - 1), (int)(X + Range));
+            ushort minX = (ushort)Math.Max(0, x - range);
+            ushort maxX = (ushort)Math.Min(MaxCellID - 1, x + range);
 
-            UInt16 MinY = (ushort)Math.Max(0, (int)(Y - Range));
-            UInt16 MaxY = (ushort)Math.Min((int)(MAX_CELL_ID - 1), (int)(Y + Range));
+            ushort minY = (ushort)Math.Max(0, y - range);
+            ushort maxY = (ushort)Math.Min(MaxCellID - 1, y + range);
 
-            for (UInt16 Ox = MinX; Ox <= MaxX; ++Ox)
-                for (UInt16 Oy = MinY; Oy <= MaxY; ++Oy)
-                    CellFunction(GetCell(Ox, Oy));
+            for (ushort ox = minX; ox <= maxX; ++ox)
+                for (ushort oy = minY; oy <= maxY; ++oy)
+                    cellFunction(GetCell(ox, oy));
         }
 
         #endregion
 
         #region Spawns
 
-        public CellSpawns[,] _CellSpawns;
+        private CellSpawns[,] _cellSpawns;
 
         public void LoadSpawns()
         {
-            _CellSpawns = WorldMgr.GetCells(RegionId);
+            _cellSpawns = CellSpawnService.GetCells(RegionId);
         }
 
-        public CellSpawns GetCellSpawn(UInt16 X, UInt16 Y)
+        public CellSpawns GetCellSpawn(ushort x, ushort y)
         {
-            X = (UInt16)Math.Min(MAX_CELL_ID - 1, X);
-            Y = (UInt16)Math.Min(MAX_CELL_ID - 1, Y);
+            x = (ushort)Math.Min(MaxCellID - 1, x);
+            y = (ushort)Math.Min(MaxCellID - 1, y);
 
-            if (_CellSpawns[X, Y] == null)
+            return _cellSpawns[x, y] ?? (_cellSpawns[x, y] = new CellSpawns(RegionId, x, y));
+        }
+        public Creature CreateCreature(Creature_spawn spawn)
+        {
+#if NO_CREATURE
+            return null;
+#endif
+            if (spawn?.Proto == null)
+                return null;
+
+            Creature crea = new Creature(spawn);
+            AddObject(crea, spawn.ZoneId);
+            return crea;
+        }
+        public GameObject CreateGameObject(GameObject_spawn spawn)
+        {
+            if (spawn == null || spawn.Proto == null)
+                return null;
+
+            GameObject obj = new GameObject(spawn);
+            AddObject(obj, spawn.ZoneId);
+            return obj;
+        }
+        public ChapterObject CreateChapter(Chapter_Info chapter)
+        {
+            ChapterObject obj = new ChapterObject(chapter);
+            AddObject(obj, chapter.ZoneId);
+            return obj;
+        }
+        public PublicQuest CreatePQuest(PQuest_Info quest)
+        {
+            if (PublicQuests.ContainsKey(quest.Entry))
+                Log.Error("CreatePQuest", "Attempted to create public quest that was already contained: ZoneID:" + quest.ZoneId + " Entry: " + quest.Entry);
+            ZoneMgr zone = GetZoneMgr(quest.ZoneId);
+            PublicQuest obj = new PublicQuest(quest);
+            AddObject(obj, quest.ZoneId);
+            PublicQuests.Add(quest.Entry, obj);
+            return obj;
+        }
+
+        #endregion
+
+        #region Outgoing packet logging
+
+        private readonly Dictionary<byte, uint> _packetVolume = new Dictionary<byte, uint>();
+
+        public bool LogPacketVolume;
+        private bool _sending;
+
+        public void NotifyOutgoingPacket(byte opcode, uint len)
+        {
+            lock (_packetVolume)
             {
-                _CellSpawns[X, Y] = new CellSpawns(RegionId, X, Y);
+                if (_sending)
+                    return;
+                if (_packetVolume.ContainsKey(opcode))
+                    _packetVolume[opcode] += len;
+                else
+                    _packetVolume.Add(opcode, len);
             }
-
-            return _CellSpawns[X, Y];
-        }
-        public Creature CreateCreature(Creature_spawn Spawn)
-        {
-            if (Spawn == null || Spawn.Proto == null)
-                return null;
-
-            Creature Crea = new Creature(Spawn);
-            AddObject((Object)Crea,Spawn.ZoneId);
-            return Crea;
-        }
-        public GameObject CreateGameObject(GameObject_spawn Spawn)
-        {
-            if (Spawn == null || Spawn.Proto == null)
-                return null;
-
-            GameObject Obj = new GameObject(Spawn);
-            AddObject(Obj, Spawn.ZoneId);
-            return Obj;
-        }
-        public ChapterObject CreateChapter(Chapter_Info Chapter)
-        {
-            ChapterObject Obj = new ChapterObject(Chapter);
-            AddObject(Obj, Chapter.ZoneId);
-            return Obj;
         }
 
-        public PQuestObject CreatePQuest(PQuest_Info Quest)
+        public void TogglePacketLogging()
         {
-            PQuestObject Obj = new PQuestObject(Quest);
-            AddObject(Obj, Quest.ZoneId);
-            return Obj;
+            if (!LogPacketVolume)
+                LogPacketVolume = true;
+
+            else
+            {
+                lock (_packetVolume)
+                    _packetVolume.Clear();
+                LogPacketVolume = false;
+            }
         }
 
-        public GameObject CreateGameObject(uint Entry, ushort ZoneId, ushort Px, ushort Py, ushort Pz)
+        public void SendPacketVolumeInfo(Player plr)
         {
-            GameObject_proto Proto = WorldMgr.GetGameObjectProto(Entry);
-            if (Proto == null)
-                return null;
+            lock (_packetVolume)
+            {
+                _sending = true;
 
-            GameObject_spawn Spawn = new GameObject_spawn();
-            Spawn.Entry = Entry;
-            Spawn.Guid = (uint)WorldMgr.GenerateGameObjectSpawnGUID();
-            Spawn.BuildFromProto(Proto);
-            Spawn.ZoneId = ZoneId;
-            ZoneMgr.CalculWorldPosition(ZoneId, Px, Py, Pz, ref Spawn.WorldX, ref Spawn.WorldY, ref Spawn.WorldZ);
-            return CreateGameObject(Spawn);
-        }
+                plr.SendClientMessage("[Total Packet Volume]");
 
-        public Creature CreateCreature(uint Entry, ushort ZoneId, ushort Px, ushort Py, ushort Pz)
-        {
-            Creature_proto Proto = WorldMgr.GetCreatureProto((uint)Entry);
-            if (Proto == null)
-                return null;
+                foreach (KeyValuePair<byte, uint> pair in _packetVolume)
+                    plr.SendClientMessage((Opcodes)pair.Key + ": " + $"{pair.Value * 0.001f:0.0##}" + "KB");
 
-            Creature_spawn Spawn = new Creature_spawn();
-            Spawn.Guid = (uint)WorldMgr.GenerateCreatureSpawnGUID();
-            Spawn.BuildFromProto(Proto);
-            Spawn.ZoneId = ZoneId;
-            ZoneMgr.CalculWorldPosition(ZoneId, Px, Py, Pz, ref Spawn._WorldO, ref Spawn._WorldY, ref Spawn._WorldZ);
-            return CreateCreature(Spawn);
+                _sending = false;
+            }
         }
 
         #endregion

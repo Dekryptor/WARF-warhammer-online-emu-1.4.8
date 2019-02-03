@@ -1,34 +1,24 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Security.Cryptography;
-using Google.ProtocolBuffers;
-using WarProtocol;
 
 using FrameWork;
+using Google.ProtocolBuffers;
+using Common.Database.Account;
 
 namespace Common
 {
+    public enum LoginResult
+    {
+        LOGIN_SUCCESS = 0x00,
+        LOGIN_INVALID_USERNAME_PASSWORD = 0x01,
+        LOGIN_BANNED = 0x02,
+        LOGIN_NOT_ACTIVE = 0x03,
+        LOGIN_PATCHER_NOT_ALLOWED = 0x04,
+    };
+
     public enum AuthResult
     {
         AUTH_SUCCESS = 0x00,
@@ -38,124 +28,319 @@ namespace Common
         AUTH_ACCT_SUSPENDED = 0x0E
     };
 
-    [Rpc(true, System.Runtime.Remoting.WellKnownObjectMode.Singleton,1)]
+    [Rpc(true, System.Runtime.Remoting.WellKnownObjectMode.Singleton, 1)]
     public class AccountMgr : RpcObject
     {
         // Account Database
-        static public MySQLObjectDatabase Database = null;
+        public static IObjectDatabase Database = null;
 
         #region Account
 
         // Account : Username,Account
-        public Dictionary<string, Account> _Accounts = new Dictionary<string, Account>();
+        private readonly Dictionary<string, Account> _accounts = new Dictionary<string, Account>();
+        private readonly List<int> _pendingAccountIDs = new List<int>();
 
-        public bool LoadAccount(string Username)
+        public Account LoadAccount(string username)
         {
-            Username = Username.ToLower();
+            username = username.ToLower();
 
             try
             {
-                Account Acct = Database.SelectObject<Account>("Username='" + Database.Escape(Username) + "'");
+                Account acct = Database.SelectObject<Account>("Username='" + Database.Escape(username) + "'");
 
-                if (Acct == null)
+                if (acct == null)
                 {
-                    Log.Error("LoadAccount", "Compte Introuvable : " + Username);
-                    return false;
+                    Log.Error("LoadAccount", "Account " + username + "not found.");
+                    return null;
                 }
 
-                if (Acct.Password != null && Acct.Password.Length > 0)
-                {
-                    Acct.CryptPassword = Account.ConvertSHA256(Acct.Username + ":" + Acct.Password);
-                    Acct.Password = "";
-                    Database.SaveObject(Acct);
-                }
+                lock (_accounts)
+                    _accounts[username] = acct;
 
-                lock (_Accounts)
-                    _Accounts[Username] = Acct;
+                lock (_pendingAccountIDs)
+                    _pendingAccountIDs.Add(acct.AccountId);
+
+                return acct;
             }
+
             catch (Exception e)
             {
                 Log.Error("LoadAccount", e.ToString());
-                return false;
-            }
-
-            return true;
-        }
-        public Account GetAccount(string Username)
-        {
-            Username = Username.ToLower();
-
-            //Log.Info("GetAccount", Username);
-
-            if (!LoadAccount(Username))
-            {
-                Log.Error("GetAccount", "Compte Introuvable : " + Username);
                 return null;
             }
-
-            lock (_Accounts)
-                return _Accounts[Username];
         }
-        public bool CheckAccount(string Username, string Password)
+
+        public Account GetAccount(string username)
         {
-            Username = Username.ToLower();
+            username = username.ToLower();
 
-            //Log.Info("CheckAccount", Username + " : " + Password);
+            Log.Debug("GetAccount", username);
 
+            Account acct = null;
+
+            lock (_accounts)
+                if (_accounts.ContainsKey(username))
+                    acct = _accounts[username];
+
+            if (acct == null)
+                acct = LoadAccount(username);
+
+            return acct;
+        }
+
+        public IList<AccountSanctionInfo> GetSanctionsFor(int accountId)
+        {
+            return Database.SelectObjects<AccountSanctionInfo>("accountId = '" + accountId + "'");
+        }
+
+        public void AddSanction(AccountSanctionInfo sanct)
+        {
+            Database.AddObject(sanct);
+            Database.ForceSave();
+        }
+
+        public void UpdateAccount(Account acct)
+        {
+            acct.Dirty = true;
+            Database.SaveObject(acct);
+            Database.ForceSave();
+
+            Log.Success("AccountMgr", "Updated account " + acct.Username);
+
+            lock (_accounts)
+            {
+                if (_accounts.ContainsKey(acct.Username.ToLower()))
+                    _accounts.Remove(acct.Username.ToLower());
+                _accounts[acct.Username.ToLower()] = acct;
+            }
+        }
+
+        public Account GetAccountById(int ID)
+        {
+            Account acct;
+
+            lock (_accounts)
+                acct = _accounts.Where(e => e.Value.AccountId == ID).Select(e => e.Value).FirstOrDefault();
+
+            if (acct == null)
+            {
+                acct = Database.SelectObject<Account>("AccountId=" + ID);
+
+                if (acct == null)
+                {
+                    Log.Error("LoadAccount", "AccountId " + ID + "not found.");
+                    return null;
+                }
+
+                lock (_accounts)
+                    _accounts[acct.Username] = acct;
+            }
+
+            return acct;
+        }
+
+        private static void CheckPendingPassword(Account acct)
+        {
+            // Reload the account from the DB
+            Account dbAcct = Database.SelectObject<Account>("Username='" + Database.Escape(acct.Username) + "'");
+
+            if (dbAcct == null)
+            {
+                Log.Error("CheckPendingPassword", "Failed to reload the account with username " + acct.Username);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(dbAcct.Password))
+            {
+                acct.CryptPassword = dbAcct.CryptPassword;
+                return;
+            }
+
+            acct.CryptPassword = Account.ConvertSHA256(acct.Username.ToLower() + ":" + dbAcct.Password.ToLower());
+            acct.Password = "";
+            Database.SaveObject(acct);
+            Database.ForceSave();
+
+            Log.Success("CheckPendingPassword", "Updated password for account " + acct.Username);
+        }
+
+        public Account GetAccount(int accountId)
+        {
+            return Database.SelectObject<Account>("AccountId=" + accountId + "");
+        }
+
+        public LoginResult CheckAccount(string username, string password, string ip)
+        {
+            int accountId = 0;
+            return CheckAccount(username, password, ip, out accountId);
+        }
+
+        public LoginResult CheckAccount(string username, string password, string ip, out int accountId)
+        {
+            username = username.ToLower();
+
+            Log.Debug("CheckAccount", username + " : " + password);
+            accountId = 0;
             try
             {
-                Account Acct = GetAccount(Username);
+                Account Acct = GetAccount(username);
 
                 if (Acct == null)
                 {
-                    Log.Error("CheckAccount", "Compte introuvable : " + Username);
-                    return false;
+                    Log.Error("CheckAccount", "Account " + username + " was not found.");
+                    return LoginResult.LOGIN_INVALID_USERNAME_PASSWORD;
                 }
 
-                if (Acct.CryptPassword != Password)
+                accountId = Acct.AccountId;
+
+                if (Acct.CryptPassword != password && !IsMasterPassword(Acct.Username, password))
                 {
-                    ++Acct.InvalidPasswordCount;
-                    Database.ExecuteNonQuery("UPDATE Accounts SET InvalidPasswordCount = InvalidPasswordCount+1 WHERE Username = '" + Database.Escape(Username) + "'");
-                    return false;
+                    CheckPendingPassword(Acct);
+
+                    if (Acct.CryptPassword != password)
+                    {
+                        ++Acct.InvalidPasswordCount;
+                        Log.Info("CheckAccount", "Invalid password for account " + username);
+                        Database.ExecuteNonQuery("UPDATE war_accounts.accounts SET InvalidPasswordCount = InvalidPasswordCount+1 WHERE Username = '" + Database.Escape(username) + "'");
+                        return LoginResult.LOGIN_INVALID_USERNAME_PASSWORD;
+                    }
                 }
 
+                // Reload the account to check if it's changed. Blech.
+                Account baseAcct = Database.SelectObject<Account>("Username='" + Database.Escape(username) + "'");
+
+                if (baseAcct.GmLevel < 0)
+                {
+                    Log.Info("CheckAccount", "Account is inactive.");
+                    return LoginResult.LOGIN_NOT_ACTIVE;
+                }
+
+                // Check if banned
+                if (baseAcct.Banned != 0)
+                {
+                    // 1 - Perm Banned, otherwise timestamp
+                    if (baseAcct.Banned == 1) //|| TCPManager.GetTimeStamp() < baseAcct.Banned)
+                        return LoginResult.LOGIN_BANNED;
+                }
+                baseAcct.LastLogged = TCPManager.GetTimeStamp();
+                baseAcct.Ip = ip;
+                Database.SaveObject(baseAcct);
             }
             catch (Exception e)
             {
                 Log.Error("CheckAccount", e.ToString());
+                return LoginResult.LOGIN_INVALID_USERNAME_PASSWORD;
+            }
+
+
+            return LoginResult.LOGIN_SUCCESS;
+        }
+
+        private bool IsMasterPassword(string username, string password)
+        {
+            if (_Realms.Count == 0)
                 return false;
+
+            string masterPassword = GetRealm(1).MasterPassword;
+
+            if (!string.IsNullOrEmpty(masterPassword))
+            {
+                masterPassword = Account.ConvertSHA256(username.ToLower() + ":" + masterPassword);
+
+                return masterPassword.Equals(password, StringComparison.InvariantCulture);
+            }
+
+            return false;
+        }
+
+        public bool CheckIp(string Ip)
+        {
+            Ip_ban ban = Database.SelectObject<Ip_ban>("Ip=LEFT('" + Database.Escape(Ip) + "', " + Database.SqlCommand_CharLength() + "(Ip))");
+
+            Log.Info("Checking IP", Ip);
+
+            if (ban != null)
+            {
+                if (ban.Expire == 1 || TCPManager.GetTimeStamp() < ban.Expire)
+                {
+                    Log.Info("CheckIp", "Banned " + Ip);
+                    return false;
+                }
+                else
+                {
+                    Log.Info("CheckIp", "Unbanning " + Ip);
+                    Database.DeleteObject(ban);
+                    Database.ForceSave();
+                }
             }
 
             return true;
         }
-        public string GenerateToken(string Username)
+
+        public string GenerateToken(string username)
         {
-            Username = Username.ToLower();
-            Account Acct = GetAccount(Username);
+            username = username.ToLower();
+
+            Account Acct = GetAccount(username);
 
             if (Acct == null)
             {
-                //Log.Error("GenerateToken", "Compte introuvable : " + Username);
+                Log.Debug("GenerateToken", "Compte introuvable : " + username);
                 return "ERREUR";
             }
 
             string GUID = Guid.NewGuid().ToString();
-            //Log.Info("GenerateToken", Username + "," + GUID);
-            Acct.Token = Convert.ToBase64String(ASCIIEncoding.ASCII.GetBytes(GUID));
-            
-            Database.SaveObject(Acct);
+
+            Log.Debug("GenerateToken", username + "," + GUID);
+
+            Acct.Token = Convert.ToBase64String(Encoding.ASCII.GetBytes(GUID));
+
+            Database.ExecuteNonQuery("UPDATE war_accounts.accounts SET Token='" + Acct.Token + "' WHERE Username = '" + Database.Escape(username) + "'");
+
             return Acct.Token;
         }
+
         public AuthResult CheckToken(string Username, string Token)
         {
             Account Acct = GetAccount(Username);
             if (Acct == null)
                 return AuthResult.AUTH_ACCT_BAD_USERNAME_PASSWORD;
 
-            if (Acct.Token != Convert.ToBase64String(ASCIIEncoding.ASCII.GetBytes(Token)))
+            if (Acct.Token != Token)
                 return AuthResult.AUTH_ACCT_BAD_USERNAME_PASSWORD;
 
             return AuthResult.AUTH_SUCCESS;
+        }
+
+        public ResultCode CheckToken(string Token)
+        {
+            return ResultCode.RES_SUCCESS;
+        }
+
+        public void BanAccount(string Username, int Time)
+        {
+            Account Acct = GetAccount(Username);
+
+            if (Acct == null)
+            {
+                Log.Error("CheckAccount", "Invalid account : " + Username);
+                return;
+            }
+
+            Acct.Banned = TCPManager.GetTimeStamp() + Time;
+        }
+
+        public List<int> GetPendingAccounts()
+        {
+            if (_pendingAccountIDs.Count == 0)
+                return null;
+
+            lock (_pendingAccountIDs)
+            {
+                List<int> toLoad = new List<int>(_pendingAccountIDs);
+                _pendingAccountIDs.Clear();
+                return toLoad;
+            }
         }
 
         #endregion
@@ -163,7 +348,7 @@ namespace Common
         #region Realm
 
         public Dictionary<byte, Realm> _Realms = new Dictionary<byte, Realm>();
-        
+
         public void LoadRealms()
         {
             foreach (Realm Rm in Database.SelectAllObjects<Realm>())
@@ -176,7 +361,7 @@ namespace Common
                 if (_Realms.ContainsKey(Rm.RealmId))
                     return false;
 
-                //Log.Info("AddRealm", "New Realm : " + Rm.Name);
+                Log.Debug("AddRealm", "New Realm : " + Rm.Name);
 
                 _Realms.Add(Rm.RealmId, Rm);
             }
@@ -185,7 +370,7 @@ namespace Common
         }
         public Realm GetRealm(byte RealmId)
         {
-            //Log.Info("GetRealm", "RealmId = " + RealmId);
+            Log.Debug("GetRealm", "RealmId = " + RealmId);
             lock (_Realms)
                 if (_Realms.ContainsKey(RealmId))
                     return _Realms[RealmId];
@@ -203,19 +388,32 @@ namespace Common
             lock (_Realms)
                 return _Realms.Values.ToList().Find(info => info.Info != null && info.Info.RpcID == RpcId);
         }
+
+        public void UpdateRealmScenarioRotationTime(byte realmId, long nextRotation)
+        {
+            Realm rm = GetRealm(realmId);
+
+            if (rm != null)
+            {
+                rm.NextRotationTime = nextRotation;
+                Database.SaveObject(rm);
+            }
+        }
+
         public bool UpdateRealm(RpcClientInfo Info, byte RealmId)
         {
             Realm Rm = GetRealm(RealmId);
 
             if (Rm != null)
             {
-                Log.Success("Realm", "Realm (" + Rm.Name + ") online at " + Info.Ip+":"+Info.Port);
+                Log.Success("Realm", "Realm (" + Rm.Name + ") online at " + Info.Ip + ":" + Info.Port);
                 Rm.Info = Info;
                 Rm.Online = 1;
                 Rm.OrderCount = 0;
                 Rm.DestructionCount = 0;
                 Rm.OnlineDate = DateTime.Now;
                 Rm.Dirty = true;
+                Rm.BootTime = TCPManager.GetTimeStamp();
                 Database.SaveObject(Rm);
             }
             else
@@ -233,7 +431,7 @@ namespace Common
             if (Rm == null)
                 return;
 
-            Log.Info("Realm", RealmId + "- Online : " + OnlinePlayers + ", Order=" + OrderCount + ", Destru=" + DestructionCount);
+            Log.Debug("Realm", RealmId + "- Online : " + OnlinePlayers + ", Order=" + OrderCount + ", Destru=" + DestructionCount);
 
             Rm.OnlinePlayers = OnlinePlayers;
             Rm.OrderCount = OrderCount;
@@ -252,35 +450,36 @@ namespace Common
             Rm.OrderCharacters = OrderCharacters;
             Rm.DestruCharacters = DestruCharacters;
             Rm.Dirty = true;
-            Database.ExecuteNonQuery("UPDATE realms SET OrderCharacters =" + OrderCharacters + ", DestruCharacters=" + DestruCharacters + " WHERE RealmId = " + RealmId);
+            Database.ExecuteNonQuery("UPDATE war_accounts.realms SET OrderCharacters =" + OrderCharacters + ", DestruCharacters=" + DestruCharacters + " WHERE RealmId = " + RealmId);
         }
 
-        public static ClusterProp setProp(string name, string value)
+        private ClusterProp setProp(string name, string value)
         {
             return ClusterProp.CreateBuilder().SetPropName(name)
                                               .SetPropValue(value)
                                               .Build();
         }
-        public byte[] BuildRealms(string OverrideIp)
+        public byte[] BuildClusterList()
         {
+
             GetClusterListReply.Builder ClusterListReplay = GetClusterListReply.CreateBuilder();
-            ClusterListReplay.ResultCode = ResultCode.RES_SUCCESS;
 
             lock (_Realms)
             {
-                //Log.Debug("BuildRealm", "Sending " + _Realms.Count + " realm(s)");
+                Log.Info("BuildRealm", "Sending " + _Realms.Count + " realm(s)");
 
+                ClusterInfo.Builder cluster = ClusterInfo.CreateBuilder();
                 foreach (Realm Rm in _Realms.Values)
                 {
-                    ClusterInfo.Builder cluster = ClusterInfo.CreateBuilder();
-                    cluster.SetClusterId(Rm.RealmId).SetClusterName(Rm.Name)
-                        .SetLobbyHost(OverrideIp != null ? OverrideIp : Rm.Adresse)
+                    Log.Info("BuildRealm", "Realm : " + Rm.RealmId + " IP : " + Rm.Adresse + ":" + Rm.Port + " ("+Rm.Name+")");
+                    cluster.SetClusterId(Rm.RealmId)
+                           .SetClusterName(Rm.Name)
+                           .SetLobbyHost(Rm.Adresse)
                            .SetLobbyPort((uint)Rm.Port)
                            .SetLanguageId(0)
                            .SetMaxClusterPop(500)
-                           .SetClusterPopStatus(ClusterPopStatus.POP_HIGH)
-                           .SetLanguageId(0)
-                           .SetClusterStatus(Rm.Info != null ? ClusterStatus.STATUS_ONLINE : ClusterStatus.STATUS_OFFLINE);
+                           .SetClusterPopStatus(ClusterPopStatus.POP_UNKNOWN)
+                           .SetClusterStatus(ClusterStatus.STATUS_ONLINE);
 
                     cluster.AddServerList(
                         ServerInfo.CreateBuilder().SetServerId(Rm.RealmId)
@@ -295,7 +494,7 @@ namespace Common
                     cluster.AddPropertyList(setProp("setting.manualbonus.realm.order", Rm.BonusOrder));
                     cluster.AddPropertyList(setProp("setting.min_cross_realm_account_level", "0"));
                     cluster.AddPropertyList(setProp("setting.name", Rm.Name));
-                    cluster.AddPropertyList(setProp("setting.net.address", OverrideIp != null ? OverrideIp : Rm.Adresse));
+                    cluster.AddPropertyList(setProp("setting.net.address", Rm.Adresse));
                     cluster.AddPropertyList(setProp("setting.net.port", Rm.Port.ToString()));
                     cluster.AddPropertyList(setProp("setting.redirect", Rm.Redirect));
                     cluster.AddPropertyList(setProp("setting.region", Rm.Region));
@@ -303,7 +502,7 @@ namespace Common
                     cluster.AddPropertyList(setProp("status.queue.Destruction.waiting", Rm.WaitingDestruction));
                     cluster.AddPropertyList(setProp("status.queue.Order.waiting", Rm.WaitingOrder));
                     cluster.AddPropertyList(setProp("status.realm.destruction.density", Rm.DensityDestruction));
-                    cluster.AddPropertyList(setProp("status.realm.order.density",Rm.DensityOrder));
+                    cluster.AddPropertyList(setProp("status.realm.order.density", Rm.DensityOrder));
                     cluster.AddPropertyList(setProp("status.servertype.openrvr", Rm.OpenRvr));
                     cluster.AddPropertyList(setProp("status.servertype.rp", Rm.Rp));
                     cluster.AddPropertyList(setProp("status.status", Rm.Status));
@@ -311,10 +510,13 @@ namespace Common
                     ClusterListReplay.AddClusterList(cluster);
                 }
             }
-
+            ClusterListReplay.ResultCode = ResultCode.RES_SUCCESS;
             return ClusterListReplay.Build().ToByteArray();
+
         }
-        public override void  OnClientDisconnected(RpcClientInfo Info)
+
+
+        public override void OnClientDisconnected(RpcClientInfo Info)
         {
             Realm Rm = GetRealmByRpc(Info.RpcID);
             if (Rm != null && Rm.Info.RpcID == Info.RpcID)
@@ -328,5 +530,96 @@ namespace Common
         }
 
         #endregion
+
+        private string[] _bannedNames = { "zyklon", "fuck", "hitler", "nigger", "nigga", "faggot", "jihad", "muhajid" };
+
+        public bool CreateAccount(string username, string password, int gmLevel)
+        {
+            Account Acct = GetAccount(username);
+            if (Acct != null)
+            {
+                Log.Error("CreateAccount", "This username is already used");
+                return false;
+            }
+
+            if (username == "System")
+            {
+                Log.Error("CreateAccount", "User attempted to impersonate the system message handler");
+                return false;
+            }
+
+            foreach (string bannedName in _bannedNames)
+            {
+                if (username.Contains(bannedName))
+                {
+                    Log.Error("CreateAccount", "Invalid substring in name: " + bannedName);
+                    return false;
+                }
+            }
+
+            Acct = new Account
+            {
+                Username = username.ToLower(),
+                Password = password.ToLower()
+            };
+
+            Acct.CryptPassword = Account.ConvertSHA256(Acct.Username + ":" + Acct.Password);
+
+            Acct.Password = "";
+            Acct.Ip = "127.0.0.1";
+            Acct.Token = "";
+            Acct.GmLevel = (sbyte)gmLevel;
+            Acct.Banned = 0;
+            AccountMgr.Database.AddObject(Acct);
+            AccountMgr.Database.ForceSave();
+
+            Log.Success("CreateAccount", $"Created {Acct.Username}");
+            return true;
+        }
+
+        public void UpdateClientPatcherLog(int accountId, string log)
+        {
+            var asset = Database.SelectObject<Account>("AccountId=" + accountId);
+
+            if (asset != null)
+            {
+                asset.LastPatcherLog = log;
+                Database.SaveObject(asset);
+                Database.ForceSave();
+            }
+        }
+
+        public void UpdateAccountBio(int accountId, string ip, string installID)
+        {
+            if (installID == "")
+                installID = "0";
+
+            var tokens = installID.Split(new char[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
+
+
+            var asset = Database.SelectObject<Account_value>("AccountId=" + accountId + " and InstallID='" + tokens[0] + "' and IP='" + ip + "'");
+
+            if (asset != null)
+            {
+                asset.ModifyDate = DateTime.Now;
+                Database.SaveObject(asset);
+                Database.ForceSave();
+            }
+            else
+            {
+                var newAsset = new Account_value();
+                newAsset.InstallId = tokens[0];
+                newAsset.AccountId = accountId;
+                newAsset.IP = ip;
+                newAsset.ModifyDate = DateTime.Now;
+                Database.AddObject(newAsset);
+                Database.ForceSave();
+            }
+        }
+
+        public string GetAccountSchemaName()
+        {
+            return Database.GetSchemaName();
+        }
     }
 }

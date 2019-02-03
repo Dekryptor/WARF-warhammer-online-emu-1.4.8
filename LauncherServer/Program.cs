@@ -1,47 +1,27 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿using System;
 using System.IO;
-
+using AuthenticationServer.Config;
+using AuthenticationServer.Server;
 using Common;
 using FrameWork;
 
-namespace LauncherServer
+namespace AuthenticationServer
 {
     class Program
     {
-        static public RpcClient Client = null;
-        static public LauncherConfig Config = null;
-        static public TCPServer Server = null;
+        public static RpcClient Client;
+        public static LauncherConfig Config;
+        public static TCPServer Server;
 
-        static public int Version
+        public static int Version
         {
             get
             {
                 return Config.Version;
             }
         }
-        static public string Message
+        
+        public static string Message
         {
             get
             {
@@ -49,13 +29,10 @@ namespace LauncherServer
             }
         }
 
-        static public FileInfo Info;
-        static public string StrInfo;
+        public static FileInfo Info;
+        public static string StrInfo;
 
-        static public FileInfo InfoExternal;
-        static public string StrInfoExternal;
-
-        static public AccountMgr AcctMgr
+        public static AccountMgr AcctMgr
         {
             get
             {
@@ -68,15 +45,7 @@ namespace LauncherServer
         {
             AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(onError);
 
-            Log.Texte("", "-------------------------------", ConsoleColor.DarkBlue);
-            Log.Texte("", "          _____   _____ ", ConsoleColor.Cyan);
-            Log.Texte("", "    /\\   |  __ \\ / ____|", ConsoleColor.Cyan);
-            Log.Texte("", "   /  \\  | |__) | (___  ", ConsoleColor.Cyan);
-            Log.Texte("", "  / /\\ \\ |  ___/ \\___ \\ ", ConsoleColor.Cyan);
-            Log.Texte("", " / ____ \\| |     ____) |", ConsoleColor.Cyan);
-            Log.Texte("", "/_/    \\_\\_|    |_____/ Warhammer", ConsoleColor.Cyan);
-            Log.Texte("", "http://AllPrivateServer.com", ConsoleColor.DarkCyan);
-            Log.Texte("", "-------------------------------", ConsoleColor.DarkBlue);
+            Log.Texte("", "------------------- Launcher Server -------------------", ConsoleColor.DarkRed);
 
             // Loading all configs files
             ConfigMgr.LoadConfigs();
@@ -86,23 +55,25 @@ namespace LauncherServer
             if (!Log.InitLog(Config.LogLevel, "LauncherServer"))
                 ConsoleMgr.WaitAndExit(2000);
 
+            ServerState previousState = Config.ServerState;
+            Config.ServerState = ServerState.PATCH;
+
+            LoaderMgr.Start();
             Client = new RpcClient("LauncherServer", Config.RpcInfo.RpcLocalIp, 1);
+
+            Config.ServerState = previousState;
+
             if (!Client.Start(Config.RpcInfo.RpcServerIp, Config.RpcInfo.RpcServerPort))
                 ConsoleMgr.WaitAndExit(2000);
 
-            Info = new FileInfo("Configs/PortalSettings.xml");
+            Info = new FileInfo("Configs/mythloginserviceconfig.xml");
             if (!Info.Exists)
             {
-                Log.Error("Configs/PortalSettings.xml", "Config file missing !");
+                Log.Error("Configs/mythloginserviceconfig.xml", "Config file missing !");
                 ConsoleMgr.WaitAndExit(5000);
             }
-            StrInfo = Info.OpenText().ReadToEnd();
 
-            InfoExternal = new FileInfo("Configs/PortalSettingsExternal.xml");
-            if (InfoExternal.Exists)
-            {
-                StrInfoExternal = InfoExternal.OpenText().ReadToEnd();
-            }
+            StrInfo = Info.OpenText().ReadToEnd();
 
             if (!TCPManager.Listen<TCPServer>(Config.LauncherServerPort, "LauncherServer"))
                 ConsoleMgr.WaitAndExit(2000);

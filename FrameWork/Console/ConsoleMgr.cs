@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Reflection;
@@ -29,11 +10,11 @@ namespace FrameWork
     {
         public readonly Dictionary<string, IConsoleHandler> m_consoleHandlers = new Dictionary<string,IConsoleHandler>();
 
-        private static ConsoleMgr Instance = null;
+        private static ConsoleMgr Instance;
         private bool _IsRunning = true;
-        private DateTime _start_time = DateTime.Now;
+        private DateTime _start_time = DateTime.UtcNow;
 
-        static public void Start()
+        public static void Start()
         {
             if (Instance != null)
                 return;
@@ -46,7 +27,7 @@ namespace FrameWork
             }
             catch (Exception e)
             {
-                Log.Error("ConsoleMgr", "Can not load : " + e.ToString());
+                Log.Error("ConsoleMgr", "Can not load : " + e);
             }
 
             while (Instance._IsRunning)
@@ -59,7 +40,7 @@ namespace FrameWork
                 }
                 catch
                 {
-                    // Console fermée
+                    // Closed console
                     break;
                 }
 
@@ -79,7 +60,7 @@ namespace FrameWork
             }
         }
 
-        static public void CleanLine(int size)
+        public static void CleanLine(int size)
         {
             string clear = new string(' ',size);
             Console.CursorLeft = 0;
@@ -88,22 +69,22 @@ namespace FrameWork
             Console.CursorLeft = 0;
         }
 
-        static public void Stop()
+        public static void Stop()
         {
             Instance._IsRunning = false;
         }
 
-        static public void WaitAndExit(int WaitTime)
+        public static void WaitAndExit(int WaitTime)
         {
-            System.Threading.Thread.Sleep(WaitTime);
+            Thread.Sleep(WaitTime);
             Environment.Exit(0);
         }
 
-        static public string GetUptime
+        public static string GetUptime
         {
             get
             {
-                DateTime Time = new DateTime(DateTime.Now.Ticks - Instance._start_time.Ticks);
+                DateTime Time = new DateTime(DateTime.UtcNow.Ticks - Instance._start_time.Ticks);
                 return Time.ToString("T");
             }
         }
@@ -203,7 +184,7 @@ namespace FrameWork
 
         static bool GetBool(List<string> args)
         {
-            return GetInt(args) > 0 ? true : false;
+            return GetInt(args) > 0;
         }
 
         static string GetTotalString(List<string> args, int num)

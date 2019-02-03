@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +25,7 @@ using FrameWork;
 namespace Common
 {
     // Valeur Fixe d'un character
-    [DataTable(PreCache = false, TableName = "creature_items", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "creature_items", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Creature_item : DataObject
     {
@@ -35,15 +33,16 @@ namespace Common
         private ushort _SlotId;
         private ushort _ModelId;
         private uint _EffectId;
-
-        [DataElement(AllowDbNull = false)]
+        private ushort _PrimaryColor;
+        private ushort _SecondaryColor;
+        [PrimaryKey]
         public uint Entry
         {
             get { return _Entry; }
             set { _Entry = value; Dirty = true; }
         }
 
-        [DataElement(AllowDbNull = false)]
+        [PrimaryKey]
         public ushort SlotId
         {
             get { return _SlotId; }
@@ -62,6 +61,20 @@ namespace Common
         {
             get { return _EffectId; }
             set { _EffectId = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public ushort PrimaryColor
+        {
+            get { return _PrimaryColor; }
+            set { _PrimaryColor = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public ushort SecondaryColor
+        {
+            get { return _SecondaryColor; }
+            set { _SecondaryColor = value; Dirty = true; }
         }
     }
 }

@@ -1,51 +1,29 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.Xml.Serialization;
+using MySql.Data.MySqlClient;
 
 namespace FrameWork
 {
-    // Classe de base de tous les DataObject
+    /// <summary>
+    /// The base class of all objects responsible for holding and receiving data involved in database queries and transactions.
+    /// </summary>
     [Serializable]
-    public abstract class DataObject : ICloneable
+    public abstract class DataObject
     {
         bool m_allowAdd = true;
         bool m_allowDelete = true;
 
-        /// <summary>
-        /// Default-Construktor that generates a new Object-ID and set
-        /// Dirty and Persisted to <c>false</c>
-        /// </summary>
+        // Génération d'un objet unique pour chaque DataObject
         protected DataObject()
         {
-            ObjectId = IDGenerator.GenerateID();
-            IsPersisted = false;
+            IsValid = false;
             AllowAdd = true;
             AllowDelete = true;
             IsDeleted = false;
         }
 
-        /// <summary>
-        /// The table name which own he object 
-        /// </summary>
+        // Nom de la table dont l'objet provient
         [Browsable(false)]
         public virtual string TableName
         {
@@ -56,9 +34,7 @@ namespace FrameWork
             }
         }
 
-        /// <summary>
-        /// Load object in cache or not?
-        /// </summary>
+        // Chargement en cache ou non de l'objet
         [Browsable(false)]
         public virtual bool UsesPreCaching
         {
@@ -69,15 +45,13 @@ namespace FrameWork
             }
         }
 
-        /// <summary>
-        /// Is this object also in the database?
-        /// </summary>
+        // Objet Valide ?
+        [XmlIgnore()]
         [Browsable(false)]
-        public bool IsPersisted { get; set; }
+        public bool IsValid { get; set; }
 
-        /// <summary>
-        /// Can this object added to the DB?
-        /// </summary>
+        // Peut être ou non ajouté a la DB
+        [XmlIgnore()]
         [Browsable(false)]
         public virtual bool AllowAdd
         {
@@ -85,9 +59,8 @@ namespace FrameWork
             set { m_allowAdd = value; }
         }
 
-        /// <summary>
-        /// Can this object be deleted from the DB?
-        /// </summary>
+        // Peut être ou non supprimé de la DB
+        [XmlIgnore()]
         [Browsable(false)]
         public virtual bool AllowDelete
         {
@@ -95,54 +68,41 @@ namespace FrameWork
             set { m_allowDelete = value; }
         }
 
-        /// <summary>
-        /// Index of the object in his table
-        /// </summary>
+        // Numéro de l'objet dans la table
+        [XmlIgnore()]
         [Browsable(false)]
         public string ObjectId { get; set; }
 
-        /// <summary>
-        /// Is object different than object in the DB?
-        /// </summary>
+        // Objet différent ke celui de la table ?
+        [XmlIgnore()]
         [Browsable(false)]
         public virtual bool Dirty { get; set; }
 
-        /// <summary>
-        /// Has this object been deleted from the database
-        /// </summary>
+        // Cette objet a été delete de la table ?
+        [XmlIgnore()]
         [Browsable(false)]
         public virtual bool IsDeleted { get; set; }
 
+        [XmlIgnore()]
+        [Browsable(false)]
+        public DatabaseOp pendingOp { get { return _pendingOperation; } set { _pendingOperation = value; } }
 
-        #region ICloneable Member
+        private DatabaseOp _pendingOperation;
 
-        /// <summary>
-        /// Clone the current object and return the copy
-        /// </summary>
-        /// <returns></returns>
-        public object Clone()
+        public DataObject Clone()
         {
-            var obj = (DataObject)MemberwiseClone();
-            obj.ObjectId = IDGenerator.GenerateID();
+            DataObject obj = (DataObject)MemberwiseClone();
             return obj;
         }
 
-        #endregion
-
-        /// <summary>
-        /// Returns the Tablename for an Objecttype. 
-        /// Reads the DataTable-Attribute or if
-        /// not defined returns the Classname
-        /// </summary>
-        /// <param name="myType">get the Tablename for this DataObject</param>
-        /// <returns>The </returns>
+        // Récupère la table name en lisant les attributs
         public static string GetTableName(Type myType)
         {
             object[] attri = myType.GetCustomAttributes(typeof(DataTable), true);
 
             if ((attri.Length >= 1) && (attri[0] is DataTable))
             {
-                var tab = attri[0] as DataTable;
+                var tab = (DataTable) attri[0];
                 string name = tab.TableName;
                 if (name != null)
                     return name;
@@ -157,7 +117,7 @@ namespace FrameWork
 
             if ((attri.Length >= 1) && (attri[0] is DataTable))
             {
-                var tab = attri[0] as DataTable;
+                var tab = (DataTable) attri[0];
                 string name = tab.ViewName;
                 if (name != null)
                     return name;
@@ -166,30 +126,81 @@ namespace FrameWork
             return null;
         }
 
-        /// <summary>
-        /// Is this table pre-cached on startup?
-        /// </summary>
-        /// <param name="myType"></param>
-        /// <returns>bool</returns>
+        // Précache au démarrage ?
         public static bool GetPreCachedFlag(Type myType)
         {
             object[] attri = myType.GetCustomAttributes(typeof(DataTable), true);
             if ((attri.Length >= 1) && (attri[0] is DataTable))
             {
-                var tab = attri[0] as DataTable;
+                var tab = (DataTable) attri[0];
                 return tab.PreCache;
             }
 
             return false;
         }
 
-
-        public override string ToString()
+        // Récupère la table name en lisant les attributs
+        public static EBindingMethod GetBindingMethod(Type myType)
         {
-            string str = "DataObject: " + TableName;
+            object[] attri = myType.GetCustomAttributes(typeof(DataTable), true);
 
-            str += ", ObjectID{" + ObjectId + "}";
-            return str;
+            if ((attri.Length >= 1) && (attri[0] is DataTable))
+            {
+                var tab = (DataTable)attri[0];
+                EBindingMethod bindMethod = tab.BindMethod;
+                return bindMethod;
+            }
+
+            return EBindingMethod.CompiledExpression;
         }
+
+        public void UpdateDBStatus()
+        {
+            switch (pendingOp)
+            {
+                case DatabaseOp.DOO_Insert:
+                    IsValid = true;
+                    IsDeleted = false;
+                    break;
+                case DatabaseOp.DOO_Update:
+                    IsValid = true;
+                    break;
+                case DatabaseOp.DOO_Delete:
+                    IsValid = false;
+                    IsDeleted = true;
+                    break;
+            }
+
+            pendingOp = DatabaseOp.DOO_None;
+        }
+
+        public virtual void Load(MySqlDataReader reader, int field)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    /// <summary>
+    /// The type of loading that should be performed when data related to this class is read from the database.
+    /// </summary>
+    public enum EBindingMethod
+    {
+        /// <summary>
+        /// Uses compiled expressions to bind to properties. Faster than reflection.
+        /// </summary>
+        CompiledExpression,
+        /// <summary>
+        /// <para>Uses cached accessors which assign to a constant object, which is then cloned.</para>
+        /// <para>Fast, but not thread safe and requires additional logic for classes which create instance members during their load phase.</para>
+        /// </summary>
+        StaticBound,
+        /// <summary>
+        /// Uses PropertyInfo.SetValue. The slowest, original method.
+        /// </summary>
+        Reflected,
+        /// <summary>
+        /// Causes the loader to invoke the constructor with the DataReader supplied as a parameter. Fast and thread safe but requires explicit binding code.
+        /// </summary>
+        Manual
     }
 }

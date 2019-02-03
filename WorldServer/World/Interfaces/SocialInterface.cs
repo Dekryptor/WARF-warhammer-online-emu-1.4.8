@@ -1,359 +1,566 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-
+using SystemData;
 using Common;
 using FrameWork;
+using GameData;
 
 namespace WorldServer
 {
     public class SocialInterface : BaseInterface
     {
-        List<Character_social> _Socials = new List<Character_social>();
+        private Player _player;
 
-        public void Load(List<Character_social> Socials)
+        private readonly Dictionary<uint, Character_social> _friendCharacterIds = new Dictionary<uint, Character_social>();
+        private readonly Dictionary<uint, Character_social> _ignoreCharacterIds = new Dictionary<uint, Character_social>();  
+
+        public List<Character_social> GetFriendList()
         {
-            if(Socials != null)
-                foreach (Character_social Social in Socials)
-                    Load(Social);
-
-            base.Load();
-        }
-        public EventInterface Load(Character_social Social)
-        {
-            if (Social == null || Social.DistCharacterId == 0)
-                return null;
-
-            EventInterface Interface = EventInterface.GetEventInterface((uint)Social.DistCharacterId);
-            Interface.AddEventNotify(EventName.PLAYING, OnPlayerConnect, true);
-            Interface.AddEventNotify(EventName.LEAVE, OnPlayerLeave, true);
-            Social.Event = Interface;
-            _Socials.Add(Social);
-
-            return Interface;
+            lock (_friendCharacterIds)
+                return _friendCharacterIds.Values.ToList();
         }
 
-        public override void Save()
+        public List<Character_social> GetIgnoreList()
         {
-            foreach (Character_social Social in _Socials)
-                CharMgr.Database.SaveObject(Social);
+            lock (_ignoreCharacterIds)
+                return _ignoreCharacterIds.Values.ToList();
         }
 
-        public override void Update(long Tick)
+        public bool Anon
         {
+            get
+            {
+                return _player != null && _player.Info.Anonymous;
+            }
+            set
+            {
+                if (_player == null)
+                    return;
+                _player.Info.Anonymous = value;
+                CharMgr.Database.SaveObject(_player.Info);
+                //CharMgr.Database.ForceSave();
+            }
+        }
 
+        public bool Hide
+        {
+            get
+            {
+                if (_player != null)
+                    return _player.Info.Hidden;
+
+                return false;
+            }
+            set
+            {
+                if (_player != null)
+                {
+
+                    _player.Info.Hidden = value;
+                    CharMgr.Database.SaveObject(_player.Info);
+                    //CharMgr.Database.ForceSave();
+
+                    if (value)
+                        NotifyOffline(false);
+                    else
+                        NotifyOnline(false);
+                }
+            }
+        }
+
+        public override void SetOwner(Object obj)
+        {
+            _player = (Player) obj;
+        }
+
+        public override bool Load()
+        {
+            if (Loaded)
+                return base.Load();
+
+            if (_player.Info.Socials == null)
+                _player.Info.Socials = new List<Character_social>();
+            else
+            {
+                lock (_player.Info.Socials)
+                {
+                    int socialCount = _player.Info.Socials.Count;
+
+                    for (int i = 0; i < socialCount; ++i)
+                    {
+                        Character_social social = _player.Info.Socials[i];
+
+                        if (social.Ignore == 1)
+                        {
+                            lock (_ignoreCharacterIds)
+                            {
+                                if (_ignoreCharacterIds.ContainsKey(social.DistCharacterId))
+                                {
+                                    _player.Info.Socials.RemoveAt(i);
+                                    CharMgr.Database.DeleteObject(social);
+                                    --i;
+                                    --socialCount;
+                                    continue;
+                                }
+
+                                _ignoreCharacterIds.Add(social.DistCharacterId, social);
+                            }
+                        }
+
+
+                        if (social.Friend == 1)
+                        {
+                            lock (_friendCharacterIds)
+                                if (_friendCharacterIds.ContainsKey(social.DistCharacterId))
+                                {
+                                    _player.Info.Socials.RemoveAt(i);
+                                    CharMgr.Database.DeleteObject(social);
+                                    --i;
+                                    --socialCount;
+                                    continue;
+                                }
+                            _friendCharacterIds.Add(social.DistCharacterId, social);
+                        }
+                    }
+                }
+            }
+
+            SendSocialWindowStatusFlags();
+            NotifyOnline();
+            SendSocialLists();
+
+            return base.Load();
         }
 
         public override void Stop()
         {
-            foreach(Character_social Social in _Socials)
-                if(Social != null && Social.GetEvent<EventInterface>() != null)
-                {
-                    Social.GetEvent<EventInterface>().RemoveEventNotify(EventName.PLAYING, OnPlayerConnect);
-                    Social.GetEvent<EventInterface>().RemoveEventNotify(EventName.LEAVE, OnPlayerLeave);
-                }
-
             base.Stop();
+            NotifyOffline();
         }
 
-        private bool _Anon = false;
-        private bool _Hide = false;
-        public bool Anon
+        private void NotifyOnline(bool sendOnlineText = true)
         {
-            get { return _Anon; }
-            set
+            List<Player> players;
+
+            lock (Player._Players)
             {
-                _Anon = value;
-                if(HasPlayer())
-                    GetPlayer().SendLocalizeString("", _Anon ? GameData.Localized_text.TEXT_SN_ANON_ON : GameData.Localized_text.TEXT_SN_ANON_OFF);
-            }
-        }
-        public bool Hide
-        {
-            get { return _Hide; }
-            set
-            {
-                _Hide = value;
-                if (HasPlayer())
-                    GetPlayer().SendLocalizeString("", _Hide ? GameData.Localized_text.TEXT_SN_HIDE_ON : GameData.Localized_text.TEXT_SN_HIDE_OFF);
-            }
-        }
-
-        #region Accessor
-
-        public bool HasFriend(string Name)
-        {
-            Name = Name.ToLower();
-            return _Socials.Find(info => info.Friend > 0 && info.DistName.ToLower() == Name) != null;
-        }
-        public bool HasIgnore(string Name)
-        {
-            Name = Name.ToLower();
-            return _Socials.Find(info => info.Ignore > 0 && info.DistName.ToLower() == Name) != null;
-        }
-        public Character_social GetSocial(string Name)
-        {
-            Name = Name.ToLower();
-            return _Socials.Find(info =>  info.DistName.ToLower() == Name);
-        }
-
-        #endregion
-
-        #region Functions
-
-        public void AddFriend(string Name)
-        {
-            Player Plr = GetPlayer();
-            if (Plr == null)
-                return;
-
-            Name = Name.ToLower();
-
-            if (Name.Length <= 0 || Name.ToLower() == Plr.Name.ToLower())
-            {
-                Plr.SendLocalizeString("", GameData.Localized_text.TEXT_SN_FRIENDSLIST_ERR_ADD_SELF);
-                return;
+                players = Player._Players.ToList();
             }
 
-            Character_social Social = GetSocial(Name);
-            if (Social != null && Social.Friend > 0)
+            foreach (var friend in players)
             {
-                Plr.SendLocalizeString("", GameData.Localized_text.TEXT_SN_FRIENDSLIST_ERR_EXISTS);
+                if(friend != _player)
+                    if (friend.SocInterface.HasFriend(_player.CharacterId) && (!HasIgnore(friend.CharacterId) || friend.GmLevel != 0)) //notify people who have this char as friend, except ones ignored.
+                    {
+                        if(sendOnlineText)
+                            friend.SendLocalizeString(_player.Name, ChatLogFilters.CHATLOGFILTERS_SHOUT, Localized_text.TEXT_SN_FRIEND_LOGON);
+                        friend.SocInterface.SendFriend(_player, true);
+                    }
+            }
+        }
+
+        private void NotifyOffline(bool sendOnlineText = true)
+        {
+            List<Player> players = new List<Player>();
+            lock (Player._Players)
+            {
+                players = Player._Players.ToList();
+            }
+
+            foreach (var friend in players)
+            {
+                if (friend != _player)
+                    if (friend.SocInterface.HasFriend(_player.CharacterId))
+                    {
+                        if (sendOnlineText)
+                            friend.SendLocalizeString(_player.Name, ChatLogFilters.CHATLOGFILTERS_SHOUT, Localized_text.TEXT_SN_FRIEND_LOGOFF);
+                        friend.SocInterface.SendFriend(_player, false);
+                    }
+            }
+        }
+
+        public bool HasFriend(uint characterId)
+        {
+            lock (_friendCharacterIds)
+                return _friendCharacterIds.ContainsKey(characterId);
+        }
+        public bool HasIgnore(uint characterId)
+        {
+            lock (_ignoreCharacterIds)
+                return _ignoreCharacterIds.ContainsKey(characterId);
+        }
+
+        public void AddFriend(string name)
+        {
+            if (name.Length <= 0 || name.Equals(_player.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                _player.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEXT_SN_FRIENDSLIST_ERR_ADD_SELF);
                 return;
             }
 
-            Character Char = CharMgr.GetCharacter(Name);
-            if (Char == null)
+            string charName = Player.AsCharacterName(name);
+            uint characterId = CharMgr.GetCharacterId(charName);
+
+            // Character didn't exist
+            if (characterId == 0)
             {
-                Plr.SendLocalizeString("", GameData.Localized_text.TEXT_SN_LISTS_ERR_PLAYER_NOT_FOUND);
+                _player.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEXT_SN_LISTS_ERR_PLAYER_NOT_FOUND);
                 return;
             }
 
-            EventInterface Event = null;
+            // Lift any ignore when friending someone
+            if (HasIgnore(characterId))
+                RemoveIgnore(characterId, name);
 
-            if (Social != null)
+            // Check for existing friend
+            lock (_friendCharacterIds)
             {
-                Social.Friend = 1;
-                CharMgr.Database.SaveObject(Social);
+                if (_friendCharacterIds.ContainsKey(characterId))
+                {
+                    _player.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEXT_SN_FRIENDSLIST_ERR_EXISTS);
+                    return;
+                }
+            }
 
-                Event = EventInterface.GetEventInterface((uint)Social.DistCharacterId);
+            // Players may not add a GM as a friend unless the GM friended them first
+            Character charInfo = CharMgr.GetCharacter(characterId, false);
+
+            if (charInfo != null && _player.GmLevel == 0)
+            {
+                Account acct = Program.AcctMgr.GetAccountById(charInfo.AccountId);
+
+                if (acct != null && acct.GmLevel > 1)
+                {
+                    lock (charInfo.Socials)
+                    {
+                        if (!charInfo.Socials.Any(soc => soc.DistCharacterId == _player.Info.CharacterId && soc.Friend == 1))
+                        {
+                            _player.SendClientMessage("To prevent abuse of the Friends list for staff harassment, you may not friend staff members unless they friend you first.", ChatLogFilters.CHATLOGFILTERS_CSR_TELL_RECEIVE);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            Character_social social = new Character_social
+            {
+                CharacterId = _player.Info.CharacterId,
+                DistName = charName,
+                DistCharacterId = characterId,
+                Friend = 1,
+                Ignore = 0
+            };
+            CharMgr.Database.AddObject(social);
+            _player.Info.Socials.Add(social);
+
+            lock (_friendCharacterIds)
+                _friendCharacterIds.Add(characterId, social);
+
+            //CharMgr.Database.ForceSave();
+
+            SendSocialList(social, SocialListType.SOCIAL_FRIEND);
+            _player.SendLocalizeString(charName, ChatLogFilters.CHATLOGFILTERS_SAY, Localized_text.TEXT_SN_FRIENDSLIST_ADD_SUCCESS);
+
+            Player distPlayer = Player.GetPlayer(name);
+
+            if (distPlayer != null)
+            {
+                distPlayer.SendLocalizeString(_player.Name, ChatLogFilters.CHATLOGFILTERS_SAY, Localized_text.TEXT_X_FRIENDED_YOU);
+                SendFriend(distPlayer, true);
+            }
+        }
+
+        public void RemoveFriend(string name)
+        {
+            uint characterId = CharMgr.GetCharacterId(Player.AsCharacterName(name));
+
+            Character_social social;
+
+            lock (_friendCharacterIds)
+                _friendCharacterIds.TryGetValue(characterId, out social);
+
+            if (social == null)
+            {
+                _player.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEXT_SN_LISTS_ERR_PLAYER_NOT_FOUND);
+                return;
+            }
+
+            PacketOut Out = new PacketOut((byte)Opcodes.F_SOCIAL_NETWORK);
+
+            Out.WriteUInt16(0);
+            Out.WriteByte((byte)SocialListType.SOCIAL_FRIEND);
+            Out.WriteByte(1); // Count
+            Out.WriteByte(1);
+            Out.WriteUInt32(social.DistCharacterId);
+
+            _player.SendPacket(Out);
+
+            _player.SendLocalizeString(social.DistName, ChatLogFilters.CHATLOGFILTERS_SAY, Localized_text.TEXT_SN_FRIEND_REMOVE);
+
+            if (social.Ignore > 0)
+            {
+                social.Friend = 0;
+                CharMgr.Database.SaveObject(social);
             }
             else
             {
-                Social = new Character_social();
-                Social.CharacterId = Plr._Info.CharacterId;
-                Social.DistName = Char.Name;
-                Social.DistCharacterId = Char.CharacterId;
-                Social.Friend = 1;
-                Social.Ignore = 0;
-                CharMgr.Database.AddObject(Social);
-
-                Event = Load(Social);
+                lock (_player.Info.Socials)
+                {
+                    if (_player.Info.Socials.Contains(social))
+                        _player.Info.Socials.Remove(social);
+                }
+                CharMgr.Database.DeleteObject(social);
             }
 
-            SendFriends(Social);
-            Plr.SendLocalizeString(Char.Name, GameData.Localized_text.TEXT_SN_FRIENDSLIST_ADD_SUCCESS);
+            lock(_friendCharacterIds)
+                _friendCharacterIds.Remove(social.DistCharacterId);
+
+            //CharMgr.Database.ForceSave();
         }
-        public void RemoveFriend(string Name)
-        {
-            Log.Success("RemoveFriend", "Name=" + Name);
-            Player Plr = GetPlayer();
-            if (Plr == null)
-                return;
 
-            Name = Name.ToLower();
-            Character_social Social = GetSocial(Name);
-            if (Social == null)
+        public void Ignore(string name)
+        {
+            if (name.Length <= 0 || name.Equals(_player.Name, StringComparison.OrdinalIgnoreCase))
             {
-                Plr.SendLocalizeString("", GameData.Localized_text.TEXT_SN_LISTS_ERR_PLAYER_NOT_FOUND);
+                _player.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEXT_SN_FRIENDSLIST_ERR_ADD_SELF);
                 return;
             }
 
-            EventInterface Interface = Social.GetEvent<EventInterface>();
-            if (Interface == null)
-                return;
+            string charName = Player.AsCharacterName(name);
+            uint characterId = CharMgr.GetCharacterId(charName);
 
-            Interface.RemoveEventNotify(EventName.PLAYING, OnPlayerConnect);
-            Interface.RemoveEventNotify(EventName.LEAVE, OnPlayerLeave);
+            // Character didn't exist
+            if (characterId == 0)
+            {
+                _player.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEXT_SN_LISTS_ERR_PLAYER_NOT_FOUND);
+                return;
+            }
+            bool applyIgnore = true;
+
+            lock(_ignoreCharacterIds)
+                if (_ignoreCharacterIds.ContainsKey(characterId))
+                    applyIgnore = false;
+
+            if (applyIgnore)
+                AddIgnore(characterId, name);
+            else
+                RemoveIgnore(characterId, name);
+        }
+
+        public void AddIgnore(uint characterId, string charName)
+        {
+            // Remove friend status when applying ignore
+            if (HasFriend(characterId))
+                RemoveFriend(charName);
+
+            Character_social social = new Character_social
+            {
+                CharacterId = _player.Info.CharacterId,
+                DistName = charName,
+                DistCharacterId = characterId,
+                Friend = 0,
+                Ignore = 1
+            };
+
+            CharMgr.Database.AddObject(social);
+            _player.Info.Socials.Add(social);
+
+            lock (_ignoreCharacterIds)
+                _ignoreCharacterIds.Add(characterId, social);
+
+            //CharMgr.Database.ForceSave();
+
+            SendSocialList(social, SocialListType.SOCIAL_IGNORE);
+            _player.SendLocalizeString(charName, ChatLogFilters.CHATLOGFILTERS_SAY, Localized_text.TEXT_SN_IGNORELIST_ADD_SUCCESS);
+
+            Player distPlayer = Player.GetPlayer(charName);
+
+            if (distPlayer != null && distPlayer.SocInterface.HasFriend(_player.CharacterId))
+            {
+                distPlayer.SocInterface.SendFriend(_player, false);
+            }
+        }
+
+        public void RemoveIgnore(uint characterId, string charName)
+        {
+            Character_social social;
+
+            lock (_ignoreCharacterIds)
+                social = _ignoreCharacterIds[characterId];
 
             PacketOut Out = new PacketOut((byte)Opcodes.F_SOCIAL_NETWORK);
+
             Out.WriteUInt16(0);
-            Out.WriteByte(1);
+            Out.WriteByte((byte)SocialListType.SOCIAL_IGNORE);
             Out.WriteByte(1); // Count
             Out.WriteByte(1);
-            Out.WriteUInt32((uint)Social.DistCharacterId);
-            Plr.SendPacket(Out);
-            Plr.SendLocalizeString(Social.DistName, GameData.Localized_text.TEXT_SN_FRIEND_REMOVE);
+            Out.WriteUInt32(social.DistCharacterId);
 
-            _Socials.Remove(Social);
-            CharMgr.Database.DeleteObject(Social);
+            _player.SendPacket(Out);
+
+            _player.SendLocalizeString(social.DistName, ChatLogFilters.CHATLOGFILTERS_SAY, Localized_text.TEXT_SN_IGNORE_REMOVE);
+
+            if (social.Friend > 0)
+            {
+                social.Ignore = 0;
+                CharMgr.Database.SaveObject(social);
+            }
+            else
+            {
+                lock (_player.Info.Socials)
+                {
+                    if (_player.Info.Socials.Contains(social))
+                        _player.Info.Socials.Remove(social);
+                }
+                CharMgr.Database.DeleteObject(social);
+            }
+
+            lock (_ignoreCharacterIds)
+                _ignoreCharacterIds.Remove(social.DistCharacterId);
+
+            //CharMgr.Database.ForceSave();
+
+            //if player who was taken off ignore had this character as a friend, tell them this character is online
+            Player distPlayer = Player.GetPlayer(charName);
+
+            if (distPlayer != null && distPlayer.SocInterface.HasFriend(_player.CharacterId))
+            {
+                distPlayer.SocInterface.SendFriend(_player, true);
+            }
         }
 
-        #endregion
-
-        #region Notify
-
-        public bool OnPlayerConnect(Object Sender, object Args)
+        public static void BuildPlayerInfo(ref PacketOut Out, Player Plr, bool noHide = false)
         {
-            Log.Success("OnPlayerConnect", "Name=" + Sender.Name);
-
-            Player Plr = GetPlayer();
-            if (Plr == null)
-                return false;
-
-            Character_social Social = _Socials.Find(social => social != null && social.DistName.ToLower() == Sender.Name.ToLower());
-            if(Social == null || Social.Friend <= 0)
-                return true;
-
-
-            Plr.SendLocalizeString(Sender.Name, GameData.Localized_text.TEXT_SN_FRIEND_LOGON);
-            SendFriend(Sender.GetPlayer(),true);
-
-            return false; // On ne le delete pas
-        }
-        public bool OnPlayerLeave(Object Sender, object Args)
-        {
-            Log.Success("OnPlayerLeave", "Name=" + Sender.Name);
-
-            Player Plr = GetPlayer();
-            if (Plr == null)
-                return false;
-
-            Character_social Social = _Socials.Find(social => social != null && social.DistName.ToLower() == Sender.Name.ToLower());
-            if (Social == null || Social.Friend <= 0)
-                return true;
-
-
-            Plr.SendLocalizeString(Sender.Name, GameData.Localized_text.TEXT_SN_FRIEND_LOGOFF);
-            SendFriend(Sender.GetPlayer(), false);
-
-            return false;
+            BuildPlayerInfo(ref Out, (ushort)Plr._Value.CharacterId, Plr.Name, true, Plr.SocInterface.Anon, Plr.Level, Plr.Info.Career, Plr._Value.ZoneId, Plr.GldInterface.GetGuildName(), noHide);
         }
 
-        #endregion
-
-        #region Builder
-
-        static public void BuildPlayerInfo(ref PacketOut Out,Character Char)
-        {
-            BuildPlayerInfo(ref Out, (uint)Char.CharacterId, Char.Name, false, 0, 0, 0);
-        }
-        static public void BuildPlayerInfo(ref PacketOut Out, Player Plr)
-        {
-            BuildPlayerInfo(ref Out, (UInt16)Plr._Value.CharacterId, Plr.Name, Plr.SocInterface.Anon ? false : true, Plr.Level, (UInt16)Plr._Info.Career, Plr._Value.ZoneId);
-        }
-        static public void BuildPlayerInfo(ref PacketOut Out,uint CharId, string Name, bool Online, byte Level, UInt16 Career, UInt16 Zone)
+        public static void BuildPlayerInfo(ref PacketOut Out, uint CharId, string Name, bool Online, bool Anonymous, byte Level, ushort Career, ushort Zone, string GuildName, bool noHide = false)
         {
             Out.WriteUInt32(CharId);
-            Out.WriteByte(0);
-            Out.WritePascalString(Name);
+
+            Out.WriteUInt16((ushort)(Name.Length + 1));
+            Out.WriteStringBytes(Name);
             Out.WriteByte(0);
 
-            Out.WriteByte((byte)(Online ? 1 : 0));
-            Out.WriteByte((byte)(Online ? 1 : 0));
-
-            if (!Online)
-                return;
-
-            Out.WriteByte(Level);
-            Out.WriteUInt16(0);
-            Out.WriteUInt16(Career);
-            Out.WriteUInt16(Zone);
-            Out.WriteUInt16(1); // Guild Size
             Out.WriteByte(0);
-        }
-        static public void BuildPlayerInfo(ref PacketOut Out, Character_social Social)
-        {
-            EventInterface Interface = Social.GetEvent<EventInterface>();
-            if (Interface != null && Interface.HasPlayer())
-                BuildPlayerInfo(ref Out, Interface.GetPlayer());
+
+            if (!Online || Anonymous && !noHide)
+            {
+                Out.WriteByte(0);
+            }
             else
-                BuildPlayerInfo(ref Out, (uint)Social.DistCharacterId, Social.DistName, false, 0, 0, 0);
+            {
+                Out.WriteByte(1);
+                Out.WriteByte(1);
+
+                Out.WriteByte(Level);
+                Out.WriteUInt16(0);
+                Out.WriteUInt16(Career);
+                Out.WriteUInt16(Zone);
+
+                Out.WriteUInt16((ushort)(GuildName.Length));
+                Out.WriteStringBytes(GuildName);
+            }
         }
 
-        #endregion
-
-        #region Packets
-
-        public void SendFriend(Player Plr,bool online)
+        public static void BuildPlayerInfo(ref PacketOut Out, Character_social Social, bool noHide = false)
         {
-            PacketOut Out = new PacketOut((byte)Opcodes.F_SOCIAL_NETWORK);
+            var player = Player.GetPlayer(Social.DistName);
+
+            BuildPlayerInfo(ref Out, Social.DistCharacterId,
+                Social.DistName,
+                player != null, //online
+                (bool)(player != null ? player.SocInterface.Anon : true), //anon
+                (byte)(player != null ? player.Level : 0), //level
+                (ushort)(player != null ? player.Info.Career : 0), //career
+                (ushort)(player != null ? player.Zone.ZoneId : 0), //zoneid
+                player != null ? player.GldInterface.GetGuildName() : "", //guild
+                noHide);
+        }
+
+
+        public void SendFriend(Player Plr, bool online)
+        {
+            PacketOut Out = new PacketOut((byte)Opcodes.F_SOCIAL_NETWORK, 25 + (online ? 1 : Plr.Info.Name.Length + Plr.GldInterface.GetGuildName().Length));
             Out.WriteUInt16(0);
-            Out.WriteByte(1);
+            Out.WriteByte((byte)SocialListType.SOCIAL_FRIEND);
             Out.WriteByte(1); // Count
             Out.WriteByte(0);
-            BuildPlayerInfo(ref Out, (uint)Plr._Info.CharacterId, Plr._Info.Name, online, Plr._Value.Level, Plr._Info.Career, Plr._Value.ZoneId);
-            GetPlayer().SendPacket(Out);
+            BuildPlayerInfo(ref Out, Plr.Info.CharacterId, Plr.Info.Name, online, false, Plr._Value.Level, Plr.Info.Career, Plr._Value.ZoneId, Plr.GldInterface.GetGuildName());
+            Out.WriteByte(0);
+            _player.SendPacket(Out);
         }
-        public void SendFriends(List<Character_social> Socials)
+
+        public void SendSocialList(List<Character_social> socials, SocialListType Type)
         {
             PacketOut Out = new PacketOut((byte)Opcodes.F_SOCIAL_NETWORK);
             Out.WriteUInt16(0);
-            Out.WriteByte(1);
-            Out.WriteByte((byte)Socials.Count);
+            Out.WriteByte((byte)Type);
+            Out.WriteByte((byte)socials.Count);
             Out.WriteByte(0);
 
-            foreach (Character_social Social in Socials)
-                BuildPlayerInfo(ref Out, Social);
+            foreach (Character_social social in socials)
+            {
+                BuildPlayerInfo(ref Out, social);
+                Out.WriteByte(0);
+            }
 
-            GetPlayer().SendPacket(Out);
+            _player.SendPacket(Out);
         }
-        public void SendFriends(Character_social Social)
+
+        public void SendSocialWindowStatusFlags()
+        {
+            byte flags = 0;
+
+            if (Anon)
+                flags |= 1;
+            if (Hide)
+                flags |= 2;
+
+            PacketOut Out = new PacketOut((byte)Opcodes.F_SOCIAL_NETWORK);
+            Out.Fill(0, 10);
+            Out.WriteByte(flags);
+            Out.Fill(0, 10);
+
+            _player.SendPacket(Out);
+        }
+
+        public void SendSocialList(Character_social Social, SocialListType Type)
         {
             PacketOut Out = new PacketOut((byte)Opcodes.F_SOCIAL_NETWORK);
             Out.WriteUInt16(0);
-            Out.WriteByte(1);
+            Out.WriteByte((byte)Type);
             Out.WriteByte(1);
             Out.WriteByte(0);
             BuildPlayerInfo(ref Out, Social);
-            GetPlayer().SendPacket(Out);
+            Out.WriteByte(0);
+            _player.SendPacket(Out);
         }
 
-        public void SendFriends()
+        public void SendSocialLists()
         {
-            SendFriends(_Socials.FindAll(social => social != null && social.Friend > 0));
+            SendSocialList(GetFriendList(), SocialListType.SOCIAL_FRIEND);
+            SendSocialList(GetIgnoreList(), SocialListType.SOCIAL_IGNORE);
         }
 
+        public static byte MAX_SEND = 255;
+        public bool blocksTells;
 
-        public void SendPlayers(List<Player> Plrs)
+        public void SendPlayers(List<Player> players, bool noHide = false)
         {
-            if (!HasPlayer())
-                return;
-
-            Player Plr = GetPlayer();
-
             PacketOut Out = new PacketOut((byte)Opcodes.F_SOCIAL_NETWORK);
             Out.WriteUInt16(0);
             Out.WriteByte(4);
-            Out.WriteByte((byte)Plrs.Count);
-            foreach (Player Dist in Plrs)
+
+            Out.WriteByte((byte)(players.Count > MAX_SEND ? MAX_SEND : players.Count));
+            foreach (Player Dist in players.Take(MAX_SEND))
             {
-                SocialInterface.BuildPlayerInfo(ref Out, Dist);
+                BuildPlayerInfo(ref Out, Dist, noHide);
             }
-            Out.WriteByte(1);
-            Plr.SendPacket(Out);
+            Out.WriteByte((byte)(players.Count > MAX_SEND ? 1 : 0));
+            _player.SendPacket(Out);
         }
 
-        #endregion
     }
 }

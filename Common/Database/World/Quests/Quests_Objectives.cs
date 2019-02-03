@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -29,40 +10,57 @@ namespace Common
     public enum Objective_Type
     {
         QUEST_UNKNOWN = 0,
-        QUEST_SPEACK_TO = 1,
+        QUEST_SPEAK_TO = 1,
         QUEST_KILL_MOB = 2,
         QUEST_USE_GO = 3,
         QUEST_GET_ITEM = 4,
         QUEST_KILL_PLAYERS = 5,
         QUEST_PROTECT_UNIT = 6,
+        QUEST_USE_ITEM = 7,
+        QUEST_WIN_SCENARIO = 8,
+        QUEST_CAPTURE_BO = 9,
+        QUEST_CAPTURE_KEEP = 10,
+        QUEST_KILL_GO = 11
     };
 
-    // Valeur Fixe d'un character
-    [DataTable(PreCache = false, TableName = "quests_objectives", DatabaseName = "World")]
+    // Fixed value of a character
+    [DataTable(PreCache = false, TableName = "quests_objectives", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Quest_Objectives : DataObject
     {
         [PrimaryKey(AutoIncrement=true)]
-        public int Guid;
+        public int Guid { get; set; }
 
         [DataElement()]
-        public UInt16 Entry;
+        public ushort Entry { get; set; }
 
         [DataElement()]
-        public uint ObjType;
+        public uint ObjType { get; set; }
 
         [DataElement()]
-        public uint ObjCount;
+        public uint ObjCount { get; set; }
 
         [DataElement()]
-        public string Description;
+        public string Description { get; set; }
 
         [DataElement()]
-        public string ObjID;
+        public string ObjID { get; set; }
 
-        public byte num;
+        [DataElement()]
+        public ushort PQArea { get; set; }
+
+        [DataElement()]
+        public string inZones { get; set; }
+
+        [DataElement()]
+        public int PreviousObj { get; set; }
+
         public Quest Quest;
         public Item_Info Item = null;
         public Creature_proto Creature = null;
+        public GameObject_proto GameObject = null;
+        public Scenario_Info Scenario = null;
+        public Battlefront_Objective BattlefrontObjective = null;
+        public Keep_Info Keep = null;
     }
 }

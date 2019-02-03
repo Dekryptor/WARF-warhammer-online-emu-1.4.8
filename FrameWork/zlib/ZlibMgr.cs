@@ -1,5 +1,5 @@
 ﻿/*
- * Copyright (C) 2013 APS
+ * Copyright (C) 2011 APS
  *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
@@ -33,39 +33,22 @@ namespace FrameWork
 
         static public byte[] Compress(byte[] Input,int Compression,int Flush)
         {
-            byte[] Result = null;
+            MemoryStream OutPut = new MemoryStream();
+            ZOutputStream ZStream = new ZOutputStream(OutPut,Compression);
+            ZStream.FlushMode = Flush;
 
-            using (MemoryStream OutPut = new MemoryStream())
-            {
-                ZOutputStream ZStream = new ZOutputStream(OutPut, Compression);
-                {
-                    ZStream.FlushMode = Flush;
-                    Process(ZStream, Input);
-                    Result = OutPut.ToArray();
-                }
+            Process(ZStream,Input);
 
-                OutPut.Close();
-            }
-
-            return Result;
+            return OutPut.ToArray();
         }
 
         static public byte[] Decompress(byte[] Input)
         {
-            byte[] Result = null;
+            MemoryStream OutPut = new MemoryStream();
+            ZOutputStream ZStream = new ZOutputStream(OutPut);
+            Process(ZStream,Input);
 
-            using (MemoryStream OutPut = new MemoryStream())
-            {
-                ZOutputStream ZStream = new ZOutputStream(OutPut);
-                {
-                    Process(ZStream, Input);
-                    Result = OutPut.ToArray();
-                }
-
-                OutPut.Close();
-            }
-
-            return Result;
+            return OutPut.ToArray();
         }
 
         static private void Process(ZOutputStream ZStream,byte[] Input)
@@ -78,7 +61,7 @@ namespace FrameWork
             }
             catch (Exception e)
             {
-                Log.Error("Zlib", "Process Error : " + e.ToString());
+                Log.Error("Zlib", "Process Error : " + e);
             }
         }
     }

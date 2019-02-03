@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,29 +17,20 @@
  
 using System;
 using System.Collections.Generic;
+using System.Runtime.Remoting.Messaging;
 //using System.Linq;
 using System.Text;
+using System.Threading;
 
 namespace FrameWork
 {
     public class CryptKey
     {
-        private string _sKey;
         private byte[] _bKey;
-
-        public CryptKey(string Key)
-        {
-            SetKey(Key);
-        }
 
         public CryptKey(byte[] Key)
         {
             SetKey(Key);
-        }
-
-        public void SetKey(string Key)
-        {
-            _sKey = (string)Key.Clone();
         }
 
         public void SetKey(byte[] Key)
@@ -51,19 +40,15 @@ namespace FrameWork
 
         public byte[] GetbKey()
         {
-            return (byte[])_bKey.Clone();
-        }
-
-        public string GetsKey()
-        {
-            return (string)_sKey.Clone();
+            return _bKey;
         }
     }
 
     public interface ICryptHandler
     {
-        PacketIn Decrypt(CryptKey Key,byte[] packet);
-        byte[] Crypt(CryptKey Key,byte[] packet);
+        void Decrypt(CryptKey key, byte[] packet, int offset, int len);
+
+        void Crypt(CryptKey key, byte[] packet, int offset, int len);
 
         CryptKey GenerateKey(BaseClient client);
     }

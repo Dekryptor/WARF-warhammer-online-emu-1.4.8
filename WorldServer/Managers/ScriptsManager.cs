@@ -1,25 +1,19 @@
-﻿using System;
-using System.CodeDom.Compiler;
+﻿using System.CodeDom.Compiler;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
-using Microsoft.CSharp;
-using Common;
 using FrameWork;
+using Microsoft.CSharp;
 
 namespace WorldServer
 {
     public class CSharpScriptCompiler
     {
-        public CSharpScriptCompiler()
-        {
-        }
-
         private IEnumerable<string> GetScriptFiles()
         {
-            return Directory.GetFiles(Path.Combine(Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location), "Scripts")).Where(f => f.ToLower().EndsWith(".cs"));
+            return Directory.GetFiles(Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "Scripts"), "*", SearchOption.AllDirectories).Where(f => f.ToLower().EndsWith(".cs"));
         }
 
         private CompilerResults CompileScript(string filePath)
@@ -28,7 +22,7 @@ namespace WorldServer
 
             var language = CodeDomProvider.GetLanguageFromExtension(Path.GetExtension(filePath));
             //var codeDomProvider = CodeDomProvider.CreateProvider(language);
-            var codeDomProvider = new CSharpCodeProvider(new Dictionary<string, string>() { { "CompilerVersion", "v3.5" } });
+            var codeDomProvider = new CSharpCodeProvider(new Dictionary<string, string> { { "CompilerVersion", "v4.0" } });
 
             var compilerParams = new CompilerParameters
             {
@@ -39,7 +33,7 @@ namespace WorldServer
             };
 
             Log.Info("Scripting", "Compiling :" + filePath);
-            foreach (System.Reflection.AssemblyName an in System.Reflection.Assembly.GetExecutingAssembly().GetReferencedAssemblies())
+            foreach (AssemblyName an in Assembly.GetExecutingAssembly().GetReferencedAssemblies())
                 compilerParams.ReferencedAssemblies.Add(an.Name + ".dll");
             compilerParams.ReferencedAssemblies.Add("WorldServer.exe");
 
@@ -74,7 +68,7 @@ namespace WorldServer
                         filename, err.Line, err.Column,
                         err.ErrorNumber, err.ErrorText));
                 }
-                var errorOutput = string.Format("Error loading script\r\n{0}", errors.ToString());
+                var errorOutput = string.Format("Error loading script\r\n{0}", errors);
                 
                 Log.Error("Scripting", errorOutput);
             }

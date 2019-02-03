@@ -1,64 +1,41 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-
+﻿using System;
 using FrameWork;
 
 namespace Common
 {
-    // Valeur Fixe d'un character
+    // Fixed value of a character
     [DataTable(PreCache = false, TableName = "gameobject_protos", DatabaseName = "World")]
     [Serializable]
     public class GameObject_proto : DataObject
     {
-        [DataElement(Unique=true,AllowDbNull=false)]
-        public uint Entry;
+        [PrimaryKey]
+        public uint Entry { get; set; }
 
         [DataElement(Varchar=255)]
-        public string Name;
-
-        [DataElement(AllowDbNull=true)]
-        public UInt16 DisplayID;
+        public string Name { get; set; }
 
         [DataElement(AllowDbNull = true)]
-        public UInt16 Scale;
+        public ushort DisplayID { get; set; }
 
         [DataElement(AllowDbNull = true)]
-        public byte Level;
+        public ushort Scale { get; set; }
 
         [DataElement(AllowDbNull = true)]
-        public byte Faction;
+        public byte Level { get; set; }
 
         [DataElement(AllowDbNull = true)]
-        public uint HealthPoints;
+        public byte Faction { get; set; }
 
         [DataElement(AllowDbNull = true)]
-        public ushort TokUnlock;
+        public uint HealthPoints { get; set; }
 
         [DataElement(AllowDbNull = true)]
-        public UInt16[] Unks = new UInt16[6];
+        public string TokUnlock { get; set; }
 
-        public UInt16 GetUnk(int Id)
+        [DataElement(AllowDbNull = true)]
+        public ushort[] Unks { get; set; } = new ushort[6];
+
+        public ushort GetUnk(int Id)
         {
             if (Id >= Unks.Length)
                 return 0;
@@ -67,18 +44,33 @@ namespace Common
         }
 
         [DataElement()]
-        public byte Unk1;
+        public byte Unk1 { get; set; }
 
         [DataElement()]
-        public byte Unk2;
+        public byte Unk2 { get; set; }
 
         [DataElement()]
-        public UInt32 Unk3;
+        public uint Unk3 { get; set; }
 
         [DataElement()]
-        public UInt32 Unk4;
+        public uint Unk4 { get; set; }
 
         [DataElement(Varchar = 255, AllowDbNull = true)]
-        public string ScriptName;
+        public string ScriptName { get; set; }
+
+        [DataElement()] // Used to spawn NPCs from GOs
+        public uint CreatureId { get; set; }
+
+        [DataElement()] // Used to spawn NPCs from GOs
+        public uint CreatureCount { get; set; }
+
+        [DataElement()] // Used to spawn NPCs from GOs
+        public string CreatureSpawnText { get; set; }
+
+        [DataElement()] // Used to spawn NPCs from GOs
+        public uint CreatureCooldownMinutes { get; set; }
+
+        [DataElement(AllowDbNull = true)]
+        public byte IsAttackable { get; set; }
     }
 }

@@ -62,7 +62,7 @@ namespace FrameWork
 			
 			set
 			{
-				this.flush = value;
+				flush = value;
 			}
 			
 		}
@@ -91,7 +91,7 @@ namespace FrameWork
 		protected byte[] buf, buf1 = new byte[1];
 		protected bool compress;
 		
-		internal System.IO.Stream in_Renamed = null;
+		internal System.IO.Stream in_Renamed;
 		
 		public ZInputStream(System.IO.Stream in_Renamed):base(in_Renamed)
 		{
@@ -126,7 +126,7 @@ namespace FrameWork
 			return (buf1[0] & 0xFF);
 		}
 		
-		internal bool nomoreinput = false;
+		internal bool nomoreinput;
 				
 		public int read(byte[] b, int off, int len)
 		{
@@ -171,7 +171,7 @@ namespace FrameWork
 			if (n < len)
 				len = (int) n;
 			byte[] tmp = new byte[len];
-			return ((long) SupportClass.ReadInput(BaseStream, tmp, 0, tmp.Length));
+			return SupportClass.ReadInput(BaseStream, tmp, 0, tmp.Length);
 		}
 		
 		public override void  Close()

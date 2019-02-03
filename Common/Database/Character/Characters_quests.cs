@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -48,10 +29,7 @@ namespace Common
 
         public bool IsDone()
         {
-            if (Objective == null)
-                return false;
-            else
-                return Count >= Objective.ObjCount;
+            return Count >= Objective?.ObjCount;
         }
     }
 
@@ -60,48 +38,50 @@ namespace Common
     [Serializable]
     public class Character_quest : DataObject
     {
-        [DataElement(AllowDbNull = false)]
-        public UInt32 CharacterId;
+        [PrimaryKey]
+        public uint CharacterId { get; set; }
 
-        [DataElement(AllowDbNull = false)]
-        public UInt16 QuestID;
+        [PrimaryKey]
+        public ushort QuestID { get; set; }
 
-        [DataElement(AllowDbNull=false)]
+        [DataElement(AllowDbNull=false, Varchar = 64)]
         public string Objectives
         {
             get
             {
-                string Value = "";
-                foreach (Character_Objectives Obj in _Objectives)
-                    Value += Obj.ObjectiveID + ":" + Obj.Count + "|";
-                return Value;
+                string value = "";
+                foreach (Character_Objectives obj in _Objectives)
+                    value += obj.ObjectiveID + ":" + obj.Count + "|";
+                return value;
             }
             set
             {
                 if (value.Length <= 0)
                     return;
 
-                string[] Objs = value.Split('|');
+                string[] Objectives = value.Split('|');
 
-                foreach (string Obj in Objs)
+                foreach (string objectiveString in Objectives)
                 {
-                    if (Obj.Length <= 0)
+                    if (objectiveString.Length <= 0)
                         continue;
 
-                    int ObjectiveID = int.Parse(Obj.Split(':')[0]);
-                    int Count = int.Parse(Obj.Split(':')[1]);
+                    int objectiveID = int.Parse(objectiveString.Split(':')[0]);
+                    int count = int.Parse(objectiveString.Split(':')[1]);
 
-                    Character_Objectives CObj = new Character_Objectives();
-                    CObj.Quest = this;
-                    CObj.ObjectiveID = ObjectiveID;
-                    CObj._Count = Count;
-                    _Objectives.Add(CObj);
+                    Character_Objectives cObj = new Character_Objectives
+                    {
+                        Quest = this,
+                        ObjectiveID = objectiveID,
+                        _Count = count
+                    };
+                    _Objectives.Add(cObj);
                 }
             }
         }
 
         [DataElement(AllowDbNull = false)]
-        public bool Done;
+        public bool Done { get; set; }
 
         public bool IsDone()
         {

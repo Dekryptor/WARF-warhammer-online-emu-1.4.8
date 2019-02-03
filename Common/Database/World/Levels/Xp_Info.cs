@@ -1,5 +1,8 @@
 ﻿/*
- * Copyright (C) 2013 APS
+ *  Copyright (C) 2014 WarEmu
+ *	http://WarEmu.com
+ * 
+ * Copyright (C) 2011-2013 APS
  *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
@@ -16,7 +19,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
- 
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -26,7 +29,7 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "xp_infos", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "xp_infos", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Xp_Info : DataObject
     {
@@ -35,7 +38,7 @@ namespace Common
         public int _Adv1;
         public int _Adv2;
 
-        [DataElement(Unique = true)]
+        [PrimaryKey]
         public byte Level
         {
             get { return _Level; }

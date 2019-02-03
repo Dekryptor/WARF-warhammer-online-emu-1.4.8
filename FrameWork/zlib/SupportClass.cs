@@ -1,6 +1,6 @@
 
 /*
- * Copyright (C) 2013 APS
+ * Copyright (C) 2011 APS
  *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
@@ -123,7 +123,7 @@ namespace FrameWork
 		/// <param name="start">The starting index of the target array.</param>
 		/// <param name="count">The maximum number of characters to read from the source Stream.</param>
 		/// <returns>The number of characters read. The number will be less than or equal to count depending on the data available in the source Stream. Returns -1 if the end of the stream is reached.</returns>
-		public static System.Int32 ReadInput(System.IO.Stream sourceStream, byte[] target, int start, int count)
+		public static int ReadInput(System.IO.Stream sourceStream, byte[] target, int start, int count)
 		{
 			// Returns 0 bytes if not enough space in target
 			if (target.Length == 0)
@@ -137,7 +137,7 @@ namespace FrameWork
 				return -1;
                 
 			for(int i = start; i < start + bytesRead; i++)
-				target[i] = (byte)receiver[i];
+				target[i] = receiver[i];
                 
 			return bytesRead;
 		}
@@ -148,7 +148,7 @@ namespace FrameWork
 		/// <param name="start">The starting index of the target array.</param>
 		/// <param name="count">The maximum number of characters to read from the source TextReader.</param>
 		/// <returns>The number of characters read. The number will be less than or equal to count depending on the data available in the source TextReader. Returns -1 if the end of the stream is reached.</returns>
-		public static System.Int32 ReadInput(System.IO.TextReader sourceTextReader, byte[] target, int start, int count)
+		public static int ReadInput(System.IO.TextReader sourceTextReader, byte[] target, int start, int count)
 		{
 			// Returns 0 bytes if not enough space in target
 			if (target.Length == 0) return 0;
@@ -170,7 +170,7 @@ namespace FrameWork
 		/// </summary>
 		/// <param name="sourceString">The string to be converted</param>
 		/// <returns>The new array of bytes</returns>
-		public static byte[] ToByteArray(System.String sourceString)
+		public static byte[] ToByteArray(string sourceString)
 		{
             return System.Text.Encoding.GetEncoding("iso-8859-1").GetBytes(sourceString);
 		}

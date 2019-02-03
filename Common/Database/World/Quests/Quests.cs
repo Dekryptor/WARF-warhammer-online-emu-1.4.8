@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -26,54 +7,73 @@ using FrameWork;
 
 namespace Common
 {
-    // Valeur Fixe d'un character
+    // Fixed value of a character
     [DataTable(PreCache = false, TableName = "quests", DatabaseName = "World")]
     [Serializable]
     public class Quest : DataObject
     {
-        [PrimaryKey()]
-        public UInt16 Entry;
+        [PrimaryKey]
+        public ushort Entry { get; set; }
 
         [DataElement(Varchar=255,AllowDbNull=false)]
-        public string Name;
+        public string Name { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public byte Type;
+        public byte Type { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public byte Level;
+        public byte MinLevel { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public string Description;
+        public string Description { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public string OnCompletionQuest;
+        public string OnCompletionQuest { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public string ProgressText;
+        public string ProgressText { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public string Particular;
+        public string Particular { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public uint Xp;
+        public uint Xp { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public uint Gold;
+        public uint Gold { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public string Given;
+        public string Given { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public string Choice;
+        public string Choice { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public byte ChoiceCount;
+        public byte ChoiceCount { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public UInt16 PrevQuest;
+        public ushort PrevQuest { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public bool Repeatable { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public byte MaxLevel { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public byte MinRenown { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public byte MaxRenown { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public bool Active { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public bool Shareable { get; set; }
 
         public List<Quest_Objectives> Objectives = new List<Quest_Objectives>();
+        public List<Quest_Map> Maps = new List<Quest_Map>();
         public Dictionary<Item_Info, uint> Rewards = new Dictionary<Item_Info, uint>();
     }
 }

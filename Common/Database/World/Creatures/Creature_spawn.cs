@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -26,8 +7,8 @@ using FrameWork;
 
 namespace Common
 {
-    // Valeur Fixe d'un character
-    [DataTable(PreCache = false, TableName = "creature_spawns", DatabaseName = "World")]
+    // Fixed value of a character
+    [DataTable(PreCache = false, TableName = "creature_spawns", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Creature_spawn : DataObject
     {
@@ -43,8 +24,10 @@ namespace Common
         private string _Bytes;
         private byte _Icone;
         private byte _Emote;
-        private ushort _Title;
         private byte _Faction;
+        private byte _Level;
+        private uint _Oid;
+        private byte _Enabled;
 
         [PrimaryKey(AutoIncrement = true)]
         public uint Guid
@@ -53,7 +36,7 @@ namespace Common
             set { _Guid = value; Dirty = true; }
         }
 
-        [DataElement(AllowDbNull=false)]
+        [DataElement(AllowDbNull = false)]
         public uint Entry
         {
             get { return _Entry; }
@@ -96,13 +79,6 @@ namespace Common
         }
 
         [DataElement(AllowDbNull = false)]
-        public string Bytes
-        {
-            get { return _Bytes; }
-            set { _Bytes = value; Dirty = true; }
-        }
-
-        [DataElement(AllowDbNull = false)]
         public byte Icone
         {
             get { return _Icone; }
@@ -117,11 +93,7 @@ namespace Common
         }
 
         [DataElement(AllowDbNull = false)]
-        public ushort Title
-        {
-            get { return _Title; }
-            set { _Title = value; Dirty = true; }
-        }
+        public ushort RespawnMinutes { get; set; }
 
         [DataElement(AllowDbNull = false)]
         public byte Faction
@@ -129,37 +101,42 @@ namespace Common
             get { return _Faction; }
             set { _Faction = value; Dirty = true; }
         }
-
         [DataElement()]
-        public byte WaypointType = 0; // 0 = Loop Start->End->Start, 1 = Start->End, 2 = Random
+        public byte WaypointType { get; set; } = 0; // 0 = Loop Start->End->Start, 1 = Start->End, 2 = Random
 
-
-        public byte[] bBytes
+        [DataElement(AllowDbNull = false)]
+        public byte Level
         {
-            get
-            {
-                List<byte> Btes = new List<byte>();
-                string[] Strs = _Bytes.Split(';');
-                foreach (string Str in Strs)
-                    if (Str.Length > 0)
-                        Btes.Add(byte.Parse(Str));
+            get { return _Level; }
+            set { _Level = value; Dirty = true; }
+        }
 
-                Btes.Remove(4);
-                Btes.Remove(5);
-                Btes.Remove(7);
-
-                return Btes.ToArray();
-            }
+        [DataElement(AllowDbNull = false)]
+        public uint Oid
+        {
+            get { return _Oid; }
+            set { _Oid = value; Dirty = true; }
         }
 
         public void BuildFromProto(Creature_proto Proto)
         {
+            if (Proto == null)
+            {
+                return;
+            }
             this.Proto = Proto;
             Entry = Proto.Entry;
-            Title = Proto.Title;
             Emote = Proto.Emote;
-            Bytes = Proto.Bytes;
             Icone = Proto.Icone;
         }
+
+        [DataElement(AllowDbNull = false)]
+        public byte Enabled
+        {
+            get { return _Enabled; }
+            set { _Enabled = value; Dirty = true; }
+        }
+
+        public byte NoRespawn = 0;
     }
 }

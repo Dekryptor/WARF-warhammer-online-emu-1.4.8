@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,7 +14,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
- 
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -33,34 +31,34 @@ namespace Common
     {
         public GameObject_proto Proto;
 
-        [PrimaryKey(AutoIncrement=true)]
-        public uint Guid;
+        [PrimaryKey(AutoIncrement = true)]
+        public uint Guid { get; set; }
 
         [DataElement()]
-        public uint Entry;
+        public uint Entry { get; set; }
 
         [DataElement()]
-        public ushort ZoneId;
+        public ushort ZoneId { get; set; }
 
         [DataElement()]
-        public int WorldX;
+        public int WorldX { get; set; }
 
         [DataElement()]
-        public int WorldY;
+        public int WorldY { get; set; }
 
         [DataElement()]
-        public int WorldZ;
+        public int WorldZ { get; set; }
 
         [DataElement()]
-        public int WorldO;
+        public int WorldO { get; set; }
 
         [DataElement()]
-        public uint DisplayID;
+        public uint DisplayID { get; set; }
 
         [DataElement(AllowDbNull = true)]
-        public UInt16[] Unks = new UInt16[6];
+        public ushort[] Unks { get; set; } = new ushort[6];
 
-        public UInt16 GetUnk(int Id)
+        public ushort GetUnk(int Id)
         {
             if (Id >= Unks.Length)
                 return 0;
@@ -69,20 +67,39 @@ namespace Common
         }
 
         [DataElement()]
-        public byte Unk1;
+        public byte Unk1 { get; set; }
 
         [DataElement()]
-        public byte Unk2;
+        public byte Unk2 { get; set; }
 
         [DataElement()]
-        public UInt32 Unk3;
+        public uint Unk3 { get; set; }
 
         [DataElement()]
-        public UInt32 Unk4;
+        public uint Unk4 { get; set; }
+
+        [DataElement()]
+        public uint VfxState { get; set; }
+
+        [DataElement()]
+        public uint AllowVfxUpdate { get; set; }
+
+        [DataElement()]
+        public uint DoorId { get; set; }
+
+        [DataElement()]
+        public string TokUnlock { get; set; }
+
+        [DataElement()]
+        public uint SoundId { get; set; }
+
+        [DataElement()]
+        public string AlternativeName { get; set; }
 
         public void BuildFromProto(GameObject_proto Proto)
         {
             this.Proto = Proto;
+            Entry = Proto.Entry;
             Unks = Proto.Unks;
             DisplayID = Proto.DisplayID;
         }

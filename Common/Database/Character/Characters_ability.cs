@@ -7,17 +7,17 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "character_abilities", DatabaseName = "Characters")]
+    [DataTable(PreCache = false, TableName = "character_abilities", DatabaseName = "Characters", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Character_ability : DataObject
     {
         [DataElement()]
-        public int CharacterID;
+        public int CharacterID { get; set; }
 
         [DataElement()]
-        public ushort AbilityID;
+        public ushort AbilityID { get; set; }
 
         [DataElement()]
-        public int LastCast;
+        public int LastCast { get; set; }
     }
 }

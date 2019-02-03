@@ -1,5 +1,8 @@
 ﻿/*
- * Copyright (C) 2013 APS
+ * Copyright (C) 2014 WarEmu
+ *	http://WarEmu.com
+ * 
+ * Copyright (C) 2011-2013 APS
  *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
@@ -16,11 +19,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
- 
+
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 
 using FrameWork;
 
@@ -31,163 +32,160 @@ namespace Common
     [Serializable]
     public class Item_Info : DataObject
     {
-        static public int MAX_STATS = 12;
+        public static int MaxStats = 12;
 
-        private uint _Entry;
-        private string _Name="";
-        private string _Description="";
-        private byte _Type=0;
-        private byte _Race=0;
-        private uint _ModelId=0;
-        private UInt16 _SlotId=0;
-        private byte _Rarity=0;
-        private uint _Career=0;
-        private uint _Skills=0;
-        private byte _Bind=0;
-        private UInt16 _Armor=0;
-        private int _SpellId=0;
-        private UInt16 _Dps=0;
-        private UInt16 _Speed=0;
-        private byte _MinRank=0;
-        private byte _MinRenown=0;
-        private byte _ObjectLevel=0;
-        private byte _UniqueEquiped=0;
-        private int _StartQuest=0;
-        private uint _SellPrice=0;
-        private byte _TalismanSlots=0;
-        private UInt16 _MaxStack=0;
-        private string _ScriptName;
-        private byte[] _Unk27;
+        private uint _entry;
+        private string _name="";
+        private string _description="";
+        private byte _type;
+        private byte _race;
+        private uint _modelId;
+        private ushort _slotId;
+        private byte _rarity;
+        private uint _career;
+        private uint _skills;
+        private byte _bind;
+        private ushort _armor;
+        private ushort _spellId;
+        private uint _itemSet;
+        private ushort _dps;
+        private ushort _speed;
+        private byte _minRank;
+        private byte _minRenown;
+        private byte _objectLevel;
+        private byte _uniqueEquiped;
+        private int _startQuest;
+        private uint _sellPrice;
+        private byte _talismanSlots;
+        private ushort _maxStack;
+        private string _scriptName;
+        private byte[] _unk27;
+        private bool _twoHanded;
         public byte Realm;
+        private String _craftresult;
+        private bool _dyeAble;
+        private bool _salvageable;
+        private ushort _baseColor1;
+        private ushort _baseColor2;
 
-        public Dictionary<byte, UInt16> _Stats = new Dictionary<byte, UInt16>();
-        public Dictionary<UInt32, UInt32> _Spells = new Dictionary<uint, uint>();
-        public List<KeyValuePair<byte, UInt16>> _Crafts = new List<KeyValuePair<byte, ushort>>();
-        public List<KeyValuePair<UInt32, UInt16>> _SellRequiredItems = new List<KeyValuePair<UInt32, UInt16>>();
-        public List<KeyValuePair<Item_Info, UInt16>> RequiredItems = new List<KeyValuePair<Item_Info, UInt16>>();
+        public Dictionary<byte, ushort> _Stats = new Dictionary<byte, ushort>();
+        public List<ushort> EffectsList = new List<ushort>(); 
+        public List<KeyValuePair<byte, ushort>> _Crafts = new List<KeyValuePair<byte, ushort>>();
+        public List<KeyValuePair<uint, ushort>> _SellRequiredItems = new List<KeyValuePair<uint, ushort>>();
+        public List<KeyValuePair<Item_Info, ushort>> RequiredItems = new List<KeyValuePair<Item_Info, ushort>>();
 
-        [DataElement(Unique = true)]
-        public uint Entry { get { return _Entry; } set { _Entry = value; } }
+        [PrimaryKey]
+        public uint Entry { get { return _entry; } set { _entry = value; } }
         [DataElement(Varchar = 255)]
-        public string Name { get { return _Name; } set { _Name = value; } }
+        public string Name { get { return _name; } set { _name = value; } }
         [DataElement(Varchar = 255)]
-        public string Description { get { return _Description; } set { _Description = value; } }
+        public string Description { get { return _description; } set { _description = value; } }
         
         [DataElement()]
-        public byte Type { get { return _Type; } set { _Type = value; } }
+        public byte Type { get { return _type; } set { _type = value; } }
         [DataElement()]
-        public byte Race { get { return _Race; } set { _Race = value; } }
+        public byte Race { get { return _race; } set { _race = value; } }
         [DataElement()]
-        public uint ModelId  { get { return _ModelId; } set { _ModelId = value; } }
+        public uint ModelId  { get { return _modelId; } set { _modelId = value; } }
         [DataElement()]
-        public UInt16 SlotId { get { return _SlotId; } set { _SlotId = value; } }
+        public ushort SlotId { get { return _slotId; } set { _slotId = value; } }
         [DataElement()]
-        public byte Rarity { get { return _Rarity; } set { _Rarity = value; } }
+        public byte Rarity { get { return _rarity; } set { _rarity = value; } }
         [DataElement()]
-        public uint Career { get { return _Career; } set { _Career = value; } }
+        public uint Career { get { return _career; } set { _career = value; } }
         [DataElement()]
-        public uint Skills { get { return _Skills; } set {  _Skills= value; } }
+        public uint Skills { get { return _skills; } set {  _skills= value; } }
         [DataElement()]
-        public byte Bind { get { return _Bind; } set { _Bind = value; } }
+        public byte Bind { get { return _bind; } set { _bind = value; } }
         [DataElement()]
-        public UInt16 Armor { get { return _Armor; } set { _Armor = value; } }
+        public ushort Armor { get { return _armor; } set { _armor = value; } }
         [DataElement()]
-        public int SpellId { get { return _SpellId; } set { _SpellId = value; } }
+        public ushort SpellId { get { return _spellId; } set { _spellId = value; } }
         [DataElement()]
-        public UInt16 Dps { get { return _Dps; } set { _Dps = value; } }
+        public uint ItemSet { get { return _itemSet; } set { _itemSet = value; } }
         [DataElement()]
-        public UInt16 Speed { get { return _Speed; } set { _Speed = value; } }
+        public ushort Dps { get { return _dps; } set { _dps = value; } }
         [DataElement()]
-        public byte MinRank { get { return _MinRank; } set { _MinRank = value; } }
+        public ushort Speed { get { return _speed; } set { _speed = value; } }
         [DataElement()]
-        public byte MinRenown { get { return _MinRenown; } set { _MinRenown = value; } }
+        public byte MinRank { get { return _minRank; } set { _minRank = value; } }
         [DataElement()]
-        public byte ObjectLevel { get { return _ObjectLevel; } set { _ObjectLevel = value; } }
+        public byte MinRenown { get { return _minRenown; } set { _minRenown = value; } }
         [DataElement()]
-        public byte UniqueEquiped { get { return _UniqueEquiped; } set { _UniqueEquiped = value; } }
+        public byte ObjectLevel { get { return _objectLevel; } set { _objectLevel = value; } }
         [DataElement()]
-        public int StartQuest { get { return _StartQuest; } set { _StartQuest = value; } }
+        public byte UniqueEquiped { get { return _uniqueEquiped; } set { _uniqueEquiped = value; } }
+        [DataElement()]
+        public int StartQuest { get { return _startQuest; } set { _startQuest = value; } }
         [DataElement()]
         public string Stats
         {
             get
             {
-                string St = "";
-                foreach (KeyValuePair<byte, UInt16> Stat in _Stats)
-                    St += Stat.Key + ":" + Stat.Value + ";";
+                string st = "";
+                foreach (KeyValuePair<byte, ushort> stat in _Stats)
+                    st += stat.Key + ":" + stat.Value + ";";
 
-                return St;
+                return st;
             }
             set
             {
-                string[] St = value.Split(';');
-                byte Type;
-                UInt16 Value;
-                UInt16 LastValue;
-                string[] Val;
+                string[] st = value.Split(';');
+                byte type;
+                ushort Value;
+                ushort lastValue;
+                string[] val;
 
-                foreach (string Str in St)
-                    if (Str.Length > 1)
-                    {
-                        Val = Str.Split(':');
-                        if (Val.Length < 2) continue;
+                try {
 
-                        Type = byte.Parse(Val[0]);
-                        Value = UInt16.Parse(Val[1]);
+                    foreach (string str in st)
+                        if (str.Length > 1)
+                        {
+                            val = str.Split(':');
+                            if (val.Length < 2) continue;
 
-                        if (Type <= 0 || Value <= 0)
-                            continue;
+                            type = byte.Parse(val[0]);
+                            Value = ushort.Parse(val[1]);
 
-                        LastValue = 0;
+                            if (type <= 0 || Value <= 0)
+                                continue;
 
-                        if (!_Stats.TryGetValue(Type, out LastValue))
-                            _Stats.Add(Type, Value);
-                        else
-                            _Stats[Type] = (ushort)(LastValue+Value);
-                    }
+                            lastValue = 0;
+
+                            if (!_Stats.TryGetValue(type, out lastValue))
+                                _Stats.Add(type, Value);
+                            else
+                                _Stats[type] = (ushort)(lastValue + Value);
+                        }
+                }
+                catch(Exception)
+                {
+                    Log.Error("itemstats broken in item entry ", "" + Entry + " statsstring " + value);
+
+                }
             }
         }
 
         [DataElement()]
-        public string Spells
+        public string Effects
         {
             get
             {
-                string St = "";
-                foreach (KeyValuePair<UInt32, UInt32> Spell in _Spells)
-                    St += Spell.Key + ":" + Spell.Value + ";";
+                string st = "";
+                foreach (ushort effect in EffectsList)
+                    st += effect + ";";
 
-                return St;
+                return st;
             }
             set
             {
-                string[] St = value.Split(';');
-                UInt32 Type;
-                UInt32 Value;
-                UInt32 LastValue;
-                string[] Val;
+                EffectsList.Clear();
 
-                foreach (string Str in St)
-                {
-                    if (Str.Length > 1)
-                    {
-                        Val = Str.Split(':');
-                        if (Val.Length < 2) continue;
+                string[] effectStrArray = value.Split(';');
 
-                        Type = UInt32.Parse(Val[0]);
-                        Value = UInt32.Parse(Val[1]);
-
-                        if (Type <= 0 || Value <= 0)
-                            continue;
-
-                        LastValue = 0;
-
-                        if (!_Spells.TryGetValue(Type, out LastValue))
-                            _Spells.Add(Type, Value);
-                        else
-                            _Spells[Type] = (ushort)(LastValue + Value);
-                    }
-                }
+                foreach (string effectStr in effectStrArray)
+                    if (effectStr.Length != 0)
+                        EffectsList.Add(ushort.Parse(effectStr));
             }
         }
 
@@ -196,114 +194,149 @@ namespace Common
         {
             get
             {
-                string St = "";
-                foreach (KeyValuePair<byte, UInt16> Craft in _Crafts)
-                    St += Craft.Key + ":" + Craft.Value + ";";
+                string st = "";
+                foreach (KeyValuePair<byte, ushort> craft in _Crafts)
+                    st += craft.Key + ":" + craft.Value + ";";
 
-                return St;
+                return st;
             }
             set
             {
-                string[] St = value.Split(';');
-                byte Type;
-                UInt16 Value;
-                string[] Val;
-                _Crafts.Clear();
-
-                foreach (string Str in St)
+                if (value.Length == 0)
+                    return;
+                else if (value.Length < 3)
                 {
-                    if (Str.Length > 1)
+                    _Crafts.Add(new KeyValuePair<byte, ushort>(byte.Parse(value), 0));
+                }
+                else
+                {
+                    string[] st = value.Split(';');
+                    byte type;
+                    ushort Value;
+                    string[] val;
+                    _Crafts.Clear();
+
+                    foreach (string str in st)
                     {
-                        Val = Str.Split(':');
-                        if (Val.Length < 2) continue;
+                        if (str.Length > 1)
+                        {
+                            val = str.Split(':');
+                            if (val.Length < 2) continue;
 
-                        Type = byte.Parse(Val[0]);
-                        Value = UInt16.Parse(Val[1]);
+                            type = byte.Parse(val[0]);
+                            Value = ushort.Parse(val[1]);
 
-                        if (Type <= 0 || Value <= 0)
-                            continue;
+                            if (type <= 0 || Value <= 0)
+                                continue;
 
-                        _Crafts.Add(new KeyValuePair<byte, UInt16>(Type, Value));
+                            _Crafts.Add(new KeyValuePair<byte, ushort>(type, Value));
+                        }
                     }
                 }
             }
         }
 
         [DataElement()]
-        public uint SellPrice { get { return _SellPrice; } set { _SellPrice = value; } }
+        public uint SellPrice { get { return _sellPrice; } set { _sellPrice = value; } }
         [DataElement()]
         public string SellRequiredItems
         {
             get
             {
-                string St = "";
-                foreach (KeyValuePair<UInt32, UInt16> SRI in _SellRequiredItems)
-                    St += SRI.Key + ":" + SRI.Value + ";";
+                string st = "";
+                foreach (KeyValuePair<uint, ushort> sri in _SellRequiredItems)
+                    st += sri.Key + ":" + sri.Value + ";";
 
-                return St;
+                return st;
             }
             set
             {
-                string[] St = value.Split(';');
-                UInt32 Type;
-                UInt16 Value;
-                string[] Val;
+                string[] st = value.Split(';');
+                uint type;
+                ushort Value;
+                string[] val;
                 _SellRequiredItems.Clear();
 
-                foreach (string Str in St)
+                foreach (string str in st)
                 {
-                    if (Str.Length > 1)
+                    if (str.Length > 1)
                     {
-                        Val = Str.Split(':');
-                        if (Val.Length < 2) continue;
+                        val = str.Split(':');
+                        if (val.Length < 2) continue;
 
-                        Type = UInt32.Parse(Val[0]);
-                        Value = UInt16.Parse(Val[1]);
+                        type = uint.Parse(val[0]);
+                        Value = ushort.Parse(val[1]);
 
-                        if (Type <= 0 || Value <= 0)
+                        if (type <= 0 || Value <= 0)
                             continue;
 
-                        _SellRequiredItems.Add(new KeyValuePair<UInt32, UInt16>(Type, Value));
+                        _SellRequiredItems.Add(new KeyValuePair<uint, ushort>(type, Value));
                     }
                 }
             }
         }
 
         [DataElement()]
-        public byte TalismanSlots { get { return _TalismanSlots; } set { _TalismanSlots = value; } }
+        public byte TalismanSlots { get { return _talismanSlots; } set { _talismanSlots = value; } }
         [DataElement()]
-        public UInt16 MaxStack { get { return _MaxStack; } set { _MaxStack = value; } }
+        public ushort MaxStack { get { return _maxStack; } set { _maxStack = value; } }
         [DataElement()]
         public byte[] Unk27 
         {
             get
             {
-                if (_Unk27 == null || _Unk27.Length < 27)
+                if (_unk27 == null || _unk27.Length < 27)
                 {
-                    _Unk27 = new byte[27];
-                    _Unk27[4] = 0x03;
-                    _Unk27[5] = 0x02;
+                    _unk27 = new byte[27];
+                    _unk27[4] = 0x03;
+                    _unk27[5] = 0x02;
                 }
-                return _Unk27;
+                return _unk27;
             }
             set
             {
-                _Unk27 = value;
-                if (_Unk27 == null || _Unk27.Length < 27)
+                _unk27 = value;
+                if (_unk27 == null || _unk27.Length < 27)
                 {
-                    _Unk27 = new byte[27];
-                    _Unk27[4] = 0x03;
-                    _Unk27[5] = 0x02;
+                    _unk27 = new byte[27];
+                    _unk27[4] = 0x03;
+                    _unk27[5] = 0x02;
                 }
             }
         }
 
         [DataElement(Varchar=255)]
-        public string ScriptName { get { return _ScriptName; } set { _ScriptName = value; } }
+        public string ScriptName { get { return _scriptName; } set { _scriptName = value; } }
 
-        public Dictionary<byte, UInt16> GetStats()
+        [DataElement()]
+        public bool TwoHanded { get { return _twoHanded; } set { _twoHanded = value; } }
+
+        public Dictionary<byte, ushort> GetStats()
         {
             return _Stats;
         }
+
+        [DataElement()]
+        public String Craftresult { get { return _craftresult; } set { _craftresult = value; } }
+
+        [DataElement()]
+        public bool DyeAble { get { return _dyeAble; } set { _dyeAble = value; } }
+
+        [DataElement()]
+        public bool Salvageable { get { return _salvageable; } set { _salvageable = value; } }
+
+        [DataElement()]
+        public ushort BaseColor1 { get { return _baseColor1; } set { _baseColor1 = value; } }
+
+        [DataElement()]
+        public ushort BaseColor2 { get { return _baseColor2; } set { _baseColor2 = value; } }
+
+        [DataElement(AllowDbNull = false)]
+        public ushort TokUnlock { get; set; }
+
+        //This is the unlock value that is awarded when player completes several smaller unlocks
+        [DataElement(AllowDbNull = false)]
+        public ushort TokUnlock2 { get; set; }
+
     }
 }

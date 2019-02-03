@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,29 +19,33 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.IO;
-
-using FrameWork.Utils;
+using System.Threading;
 
 namespace FrameWork
 {
     public enum PackStruct
     {
         OpcodeAndSize = 0x01,
-        SizeAndOpcode = 0x02,
+        SizeAndOpcode = 0x02
     };
 
     public class PacketOut : MemoryStream
     {
-        static public int SizeLen = sizeof(UInt32); // 4 byte
-        static public bool OpcodeInLen = false;  // Opcode on Size ?
-        static public bool SizeReverse = false;   // Reversed Size ?
-        static public bool OpcodeReverse = false; // Reversed Opcode ?
-        static public int InterOpcodeSizeCount = 0; // Space Size 
-        static public bool SizeInLen = true; // Size in Size ?
-        static public PackStruct Struct = PackStruct.SizeAndOpcode;
 
-        public int OpcodeLen = sizeof(UInt16); // 2 bytes
-        public UInt64 Opcode = 0;
+        private static readonly Encoding ISO8859_1 = Encoding.GetEncoding("iso-8859-1");
+
+        public static int SizeLen = sizeof(uint); // 4 byte
+        public static bool OpcodeInLen = false;  // Opcode on Size ?
+        public static bool SizeReverse = false;   // Reversed Size ?
+        public static bool OpcodeReverse = false; // Reversed Opcode ?
+        public static int InterOpcodeSizeCount = 0; // Space Size 
+        public static bool SizeInLen = true; // Size in Size ?
+        public static PackStruct Struct = PackStruct.SizeAndOpcode;
+
+        public int OpcodeLen = sizeof(ushort); // 2 bytes
+        public ulong Opcode;
+
+        public bool Finalized { get; private set; }
 
         protected PacketOut()
         {
@@ -65,8 +67,25 @@ namespace FrameWork
             else if (Struct == PackStruct.OpcodeAndSize) WriteSize();
         }
 
-        public PacketOut(UInt16 opcode)
-            : base(sizeof(UInt16) + SizeLen)
+        public PacketOut(byte opcode, int initialCapacity)
+        : base(sizeof(byte) + SizeLen + initialCapacity)
+        {
+            Opcode = opcode;
+            OpcodeLen = sizeof(byte);
+
+            if (Struct == PackStruct.SizeAndOpcode) WriteSize();
+            else if (Struct == PackStruct.OpcodeAndSize) WriteByte(opcode);
+
+            for (int i = 0; i < InterOpcodeSizeCount; ++i)
+                WriteByte(0);
+
+            if (Struct == PackStruct.SizeAndOpcode) WriteByte(opcode);
+            else if (Struct == PackStruct.OpcodeAndSize) WriteSize();
+        }
+
+        /*
+        public PacketOut(ushort opcode)
+            : base(sizeof(ushort) + SizeLen)
         {
             if (Struct == PackStruct.SizeAndOpcode) WriteSize();
             else if (Struct == PackStruct.OpcodeAndSize)
@@ -82,8 +101,8 @@ namespace FrameWork
             else if (Struct == PackStruct.OpcodeAndSize) WriteSize();
         }
 
-        public PacketOut(UInt32 opcode)
-            : base(sizeof(UInt32) + SizeLen)
+        public PacketOut(uint opcode)
+            : base(sizeof(uint) + SizeLen)
         {
             if (Struct == PackStruct.SizeAndOpcode) WriteSize();
             else if (Struct == PackStruct.OpcodeAndSize)
@@ -99,8 +118,8 @@ namespace FrameWork
             else if (Struct == PackStruct.OpcodeAndSize) WriteSize();
         }
 
-        public PacketOut(UInt64 opcode)
-            : base(sizeof(UInt64) + SizeLen)
+        public PacketOut(ulong opcode)
+            : base(sizeof(ulong) + SizeLen)
         {
             if (Struct == PackStruct.SizeAndOpcode) WriteSize();
             else if (Struct == PackStruct.OpcodeAndSize)
@@ -115,11 +134,90 @@ namespace FrameWork
                 else WriteUInt64R(opcode);
             else if (Struct == PackStruct.OpcodeAndSize) WriteSize();
         }
+        */
+
+
+        // Planning to use this in the future to pool smaller packets
+        public void Reset()
+        {
+            /*
+            Position = 0;
+            Opcode = 0;
+            OpcodeLen = sizeof (ushort);
+            SizeInLen = true;
+            InterOpcodeSizeCount = 0;
+            SizeLen = sizeof (uint);
+            */
+        }
+        
 
         public void WriteSize()
         {
             for (int i = 0; i < SizeLen; ++i)
                 WriteByte(0);
+        }
+
+        public static string Hex(byte[] dump, int start, int len, int? current = null)
+        {
+            var hexDump = new StringBuilder();
+
+            hexDump.AppendLine("|------------------------------------------------|----------------|");
+            hexDump.AppendLine("|00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F |0123456789ABCDEF|");
+            hexDump.AppendLine("|------------------------------------------------|----------------|");
+            try
+            {
+                int end = start + len;
+                for (int i = start; i < end; i += 16)
+                {
+                    StringBuilder text = new StringBuilder();
+                    StringBuilder hex = new StringBuilder();
+
+
+                    for (int j = 0; j < 16; j++)
+                    {
+                        if (j + i < end)
+                        {
+                            byte val = dump[j + i];
+
+                            if (current.HasValue && current.Value == j + i)
+                                hex.Append("[" + dump[j + i].ToString("X2") + "]");
+                            else
+                                hex.Append(dump[j + i].ToString("X2"));
+
+                            hex.Append(" ");
+                            if (val >= 32 && val < 127)
+                            {
+                                if (current.HasValue && current.Value == j + i)
+                                    text.Append("[" + (char)val + "]");
+                                else
+                                    text.Append((char)val);
+                            }
+                            else
+                            {
+                                if (current.HasValue && current.Value == j + i)
+                                    text.Append("[.]");
+                                else
+                                    text.Append(".");
+                            }
+                        }
+                    }
+
+                    hexDump.AppendLine("|" + hex.ToString().PadRight(48) + "|" + text.ToString().PadRight(16) + "|");
+                }
+            }
+            catch (Exception e)
+            {
+                // Log.Error("HexDump", e.ToString());
+            }
+
+            hexDump.Append("-------------------------------------------------------------------");
+            return hexDump.ToString();
+        }
+
+        public string GetHexString()
+        {
+            return "[Server] packet : (0x" + ((int)Opcode).ToString("X").PadLeft(2, '0') + ") " + " Size = " 
+                + Position + "\r\n" + Hex(ToArray(), 0, (int)Position) + "\r\n";
         }
 
         public virtual ulong WritePacketLength()
@@ -138,28 +236,30 @@ namespace FrameWork
             switch (SizeLen)
             {
                 case sizeof(byte):
-                    WriteByte((byte)(size));
+                    WriteByte((byte)size);
                     break;
 
-                case sizeof(UInt16):
-                    if (!SizeReverse) WriteUInt16((UInt16)(size));
-                    else WriteUInt16R((UInt16)size);
+                case sizeof(ushort):
+                    if (!SizeReverse) WriteUInt16((ushort)size);
+                    else WriteUInt16R((ushort)size);
                     break;
 
-                case sizeof(UInt32):
-                    if (!SizeReverse) WriteUInt32((UInt32)(size));
-                    else WriteUInt32R((UInt32)size);
+                case sizeof(uint):
+                    if (!SizeReverse) WriteUInt32((uint)size);
+                    else WriteUInt32R((uint)size);
                     break;
 
-                case sizeof(UInt64):
-                    if (!SizeReverse) WriteUInt64((UInt64)(size));
-                    else WriteUInt64R((UInt64)size);
+                case sizeof(ulong):
+                    if (!SizeReverse) WriteUInt64((ulong)size);
+                    else WriteUInt64R((ulong)size);
                     break;
             }
 
             Capacity = (int)Length;
 
-            return (ulong)(size);
+            Finalized = true;
+
+            return (ulong)size;
         }
 
         #region IPacket Members
@@ -176,18 +276,13 @@ namespace FrameWork
             WriteByte((byte)(val >> 8));
             WriteByte((byte)(val & 0xff));
         }
-        public virtual void WriteUInt16(params ushort[] vals)
-        {
-            foreach (ushort v in vals)
-                WriteUInt16(v);
-        }
         public virtual void WriteUInt16R(ushort val)
         {
             WriteByte((byte)(val & 0xff));
             WriteByte((byte)(val >> 8));
         }
 
-        public virtual void WriteInt16(Int16 val)
+        public virtual void WriteInt16(short val)
         {
             byte[] b = BitConverter.GetBytes(val);
 
@@ -195,12 +290,26 @@ namespace FrameWork
                 WriteByte(b[i-1]);
         }
 
-        public virtual void WriteInt16R(Int16 val)
+        public virtual void WriteInt16R(short val)
         {
             byte[] b = BitConverter.GetBytes(val);
 
-            for (int i = 0; i < b.Length; ++i)
-                WriteByte(b[i]);
+            for (byte i = 0; i < b.Length; ++i)
+                WriteByte(i);
+        }
+
+        public virtual void WriteUInt24(uint val)
+        {
+            WriteByte((byte)((val >> 16) & 0xff));
+            WriteByte((byte)((val & 0xffff) >> 8));
+            WriteByte((byte)((val & 0xffff) & 0xff));
+        }
+
+        public virtual void WriteUInt24R(uint val)
+        {
+            WriteByte((byte)((val & 0xffff) & 0xff));
+            WriteByte((byte)((val & 0xffff) >> 8));
+            WriteByte((byte)((val >> 16) & 0xff));
         }
 
         public virtual void WriteUInt32(uint val)
@@ -210,11 +319,6 @@ namespace FrameWork
             WriteByte((byte)((val & 0xffff) >> 8));
             WriteByte((byte)((val & 0xffff) & 0xff));
         }
-        public virtual void WriteUInt32(params uint[] vals)
-        {
-            foreach (uint val in vals)
-                WriteUInt32(vals);
-        }
         public virtual void WriteUInt32R(uint val)
         {
             WriteByte((byte)((val & 0xffff) & 0xff));
@@ -223,14 +327,14 @@ namespace FrameWork
             WriteByte((byte)(val >> 24));
         }
 
-        public virtual void WriteInt32(Int32 val)
+        public virtual void WriteInt32(int val)
         {
             byte[] b = BitConverter.GetBytes(val);
 
             for (int i = 0; i < b.Length; ++i)
                 WriteByte(b[i]);
         }
-        public virtual void WriteInt32R(Int32 val)
+        public virtual void WriteInt32R(int val)
         {
             byte[] b = BitConverter.GetBytes(val);
 
@@ -261,14 +365,14 @@ namespace FrameWork
             WriteByte((byte)(val >> 56));
         }
 
-        public virtual void WriteInt64(Int64 val)
+        public virtual void WriteInt64(long val)
         {
             byte[] b = BitConverter.GetBytes(val);
 
             for (int i = 0; i < b.Length; ++i)
                 WriteByte(b[i]);
         }
-        public virtual void WriteInt64R(Int64 val)
+        public virtual void WriteInt64R(long val)
         {
             byte[] b = BitConverter.GetBytes(val);
 
@@ -278,8 +382,40 @@ namespace FrameWork
 
         public virtual void WriteFloat(float val)
         {
-            foreach (Byte b in BitConverter.GetBytes(val))
+            foreach (byte b in BitConverter.GetBytes(val))
                 WriteByte(b);
+        }
+
+        public virtual void WriteVarUInt(uint val)
+        {
+            if (val == 0)
+            {
+                WriteByte(0);
+                return;
+            }
+
+            while (val > 0)
+            {
+                WriteByte((byte)((val & 0x7F) ^ ((val > 0x7F) ? 0x80 : 0x00)));
+                val = val >> 7;
+            }
+        }
+
+        public virtual void WriteZigZag(int val)
+        {
+            byte sign = (byte)(val < 0 ? 1 : 0);
+            if (sign == 1)
+                val++;
+            val = Math.Abs(val);
+
+            WriteByte((byte)(((val << 1) & 0x7F) ^ ((val > 0x3F) ? 0x80 : 0x00) + sign));
+            val = val >> 6;
+
+            while (val > 0)
+            {
+                WriteByte((byte)((val & 0x7F) ^ ((val > 0x7F) ? 0x80 : 0x00)));
+                val = val >> 7;
+            }
         }
 
         public virtual byte GetChecksum()
@@ -299,6 +435,38 @@ namespace FrameWork
                 WriteByte(val);
         }
 
+        /// <summary>
+        /// Writes a concatenation of given strings with ISO-8859-1 encoding.
+        /// </summary>
+        /// <param name="str">String array, may be null or contain null elements</param>
+        /// <remarks>
+        /// This method is preffered for performance purposes over $"" or string.Concat.
+        /// </remarks>
+        public void WritePascalString(params string[] str)
+        {
+            if (str == null)
+            {
+                WriteByte(0);
+                return;
+            }
+            
+            int length = 0;
+            for (int i = 0; i < str.Length; i++)
+                length += str[i] != null ? str[i].Length : 0;
+#if DEBUG
+            if (ISO8859_1.GetBytes(string.Concat(str)).Length != length)
+                throw new Exception(ISO8859_1.GetBytes(string.Concat(str)).Length + " should be " + length);
+#endif
+            WriteByte((byte)length);
+
+            for (int i = 0; i < str.Length; i++)
+            {
+                string part = str[i];
+                if (part != null)
+                    Write(ISO8859_1.GetBytes(part), 0, part.Length);
+            }
+        }
+
         public virtual void WritePascalString(string str)
         {
             if (str == null || str.Length <= 0)
@@ -307,8 +475,21 @@ namespace FrameWork
                 return;
             }
 
-            byte[] bytes = Encoding.GetEncoding("iso-8859-1").GetBytes(str);
+            byte[] bytes = ISO8859_1.GetBytes(str);
             WriteByte((byte)bytes.Length);
+            Write(bytes, 0, bytes.Length);
+        }
+
+        public virtual void WriteShortString(string str)
+        {
+            if (str == null || str.Length <= 0)
+            {
+                WriteUInt16(0);
+                return;
+            }
+
+            byte[] bytes = ISO8859_1.GetBytes(str);
+            WriteUInt16((ushort)bytes.Length);
             Write(bytes, 0, bytes.Length);
         }
 
@@ -320,16 +501,46 @@ namespace FrameWork
             }
             else
             {
-                byte[] bytes = Encoding.GetEncoding("iso-8859-1").GetBytes(str);
+                byte[] bytes = ISO8859_1.GetBytes(str);
                 WriteByte((byte)(bytes.Length + 1));
                 Write(bytes, 0, bytes.Length);
             }
+
+            WriteByte(0);
+        }
+
+        public virtual void WriteShortStringToZero(string str)
+        {
+            if (str == null || str.Length <= 0)
+            {
+                WriteUInt16(1);
+            }
+            else
+            {
+                byte[] bytes = ISO8859_1.GetBytes(str);
+                WriteUInt16((byte)(bytes.Length + 1));
+                Write(bytes, 0, bytes.Length);
+            }
+
+            WriteByte(0);
+        }
+
+        public void WriteCString(string str)
+        {
+            if (string.IsNullOrEmpty(str))
+            { 
+                WriteByte(0);
+                return;
+            }
+
+            byte[] bytes = ISO8859_1.GetBytes(str);
+            Write(bytes, 0, bytes.Length);
             WriteByte(0);
         }
 
         public virtual void WriteString(string str)
         {
-            WriteUInt32((UInt32)str.Length);
+            WriteUInt32((uint)str.Length);
             WriteStringBytes(str);
         }
         public virtual void WriteStringBytes(string str)
@@ -337,7 +548,7 @@ namespace FrameWork
             if (str.Length <= 0)
                 return;
 
-            byte[] bytes = Encoding.GetEncoding("iso-8859-1").GetBytes(str);
+            byte[] bytes = ISO8859_1.GetBytes(str);
             Write(bytes, 0, bytes.Length);
         }
         public virtual void WriteString(string str, int maxlen)
@@ -345,7 +556,7 @@ namespace FrameWork
             if (str.Length <= 0)
                 return;
 
-            byte[] bytes = Encoding.GetEncoding("iso-8859-1").GetBytes(str);
+            byte[] bytes = ISO8859_1.GetBytes(str);
             Write(bytes, 0, bytes.Length < maxlen ? bytes.Length : maxlen);
         }
         public virtual void WriteUnicodeString(string str)
@@ -390,30 +601,30 @@ namespace FrameWork
                 return;
             }
 
-            byte[] bytes = Encoding.GetEncoding("iso-8859-1").GetBytes(str);
+            byte[] bytes = ISO8859_1.GetBytes(str);
             Write(bytes, 0, len > bytes.Length ? bytes.Length : len);
             Position = pos + len;
         }
 
         public virtual void WriteVector2(Vector2 Vector)
         {
-            WriteFloat(Vector.x);
-            WriteFloat(Vector.y);
+            WriteFloat(Vector.X);
+            WriteFloat(Vector.Y);
         }
 
         public virtual void WriteVector3(Vector3 Vector)
         {
-            WriteFloat(Vector.x);
-            WriteFloat(Vector.y);
-            WriteFloat(Vector.z);
+            WriteFloat(Vector.X);
+            WriteFloat(Vector.Y);
+            WriteFloat(Vector.Z);
         }
 
         public virtual void WriteQuaternion(Quaternion Quat)
         {
-            WriteFloat(Quat.x);
-            WriteFloat(Quat.y);
-            WriteFloat(Quat.z);
-            WriteFloat(Quat.w);
+            WriteFloat(Quat.X);
+            WriteFloat(Quat.Y);
+            WriteFloat(Quat.Z);
+            WriteFloat(Quat.W);
         }
 
         public virtual void WriteHexStringBytes(string hexString)
@@ -452,57 +663,56 @@ namespace FrameWork
 
         #region Mythic
 
-        static public byte[] EncryptMythicRC4(byte[] Key,byte[] Packet)
+        private static readonly ThreadLocal<byte[]> ThreadLocalKey = new ThreadLocal<byte[]>(() => new byte[256]); 
+
+        public static void EncryptMythicRC4(byte[] key, byte[] packet, int offset, int packetLen)
         {
             try
             {
-                int x, y, midpoint, pos;
-                byte tmp = 0;
+                int x = 0;
+                int y = 0;
 
-                x = y = 0;
+                int pos;
+                byte tmp;
 
-                midpoint = Packet.Length / 2;
+                int midpoint = packetLen / 2;
 
-                for (pos = midpoint; pos < Packet.Length; ++pos)
+                byte[] k = ThreadLocalKey.Value;
+
+                Buffer.BlockCopy(key, 0, k, 0, 256);
+
+                for (pos = midpoint; pos < packetLen; ++pos)
                 {
                     x = (x + 1) & 255;
-                    y = (y + Key[x]) & 255;
+                    y = (y + k[x]) & 255;
 
-                    tmp = Key[x];
+                    tmp = k[x];
+                    k[x] = k[y];
+                    k[y] = tmp;
 
-                    Key[x] = Key[y];
-                    Key[y] = tmp;
-
-                    tmp = (byte)((Key[x] + Key[y]) & 255);
-                    y = (y + Packet[pos]) & 255;
-                    Packet[pos] ^= Key[tmp];
-
+                    tmp = (byte)((k[x] + k[y]) & 255);
+                    y = (y + packet[pos+offset]) & 255;
+                    packet[pos+offset] ^= k[tmp];
                 }
 
                 for (pos = 0; pos < midpoint; ++pos)
                 {
                     x = (x + 1) & 255;
-                    y = (y + Key[x]) & 255;
+                    y = (y + k[x]) & 255;
 
-                    tmp = Key[x];
+                    tmp = k[x];
+                    k[x] = k[y];
+                    k[y] = tmp;
 
-                    Key[x] = Key[y];
-                    Key[y] = tmp;
-
-                    tmp = (byte)((Key[x] + Key[y]) & 255);
-                    y = (y + Packet[pos]) & 255;
-                    Packet[pos] ^= Key[tmp];
+                    tmp = (byte)((k[x] + k[y]) & 255);
+                    y = (y + packet[pos+offset]) & 255;
+                    packet[pos+offset] ^= k[tmp];
                 }
-
-                return Packet;
             }
             catch (Exception e)
             {
-                Log.Error("PacketOut", "EncryptMythicRC4 : Failled !"+e.ToString());
+                Log.Error("PacketOut", "EncryptMythicRC4 : Failled !" + e);
             }
-
-            return null;
-
         }
 
         #endregion

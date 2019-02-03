@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -36,6 +17,8 @@ namespace WorldServer
         public DatabaseInfo WorldDatabase = new DatabaseInfo();
 
         public byte RealmId = 1;
+
+        // Level / Looting
         public int GlobalLootRate = 1;
         public int CommonLootRate = 1;
         public int UncommonLootRate = 1;
@@ -45,9 +28,31 @@ namespace WorldServer
         public int GoldRate = 1;
         public int XpRate = 1;
         public int RenownRate = 1;
-        public bool ChatBetweenRealms = true;
-        public bool CleanSpawns = true;
+        public int InfluenceRate = 1;
+        public int RankCap = 40;
+        public int RenownCap = 100;
 
+        // Crossrealming
+        public bool ChatBetweenRealms = true;
+        public bool CreateBothRealms = true;
+
+        // Area / NPC
+        public bool CleanSpawns = true;
+        public bool DiscoverAll = false;
+        public bool OpenRvR = true;
+
+        // Loading
+        public bool PreloadAllCharacters = true;
+        public string Motd = "Welcome to NewDawn!";
+        public string RegionOcclusionFolder = "los/";
         public string ZoneFolder = "zones/";
+
+        // API
+        public bool EnableAPI = true;
+        public string APIAddress = "127.0.0.1";
+        public int APIPort = 51932;
+
+        // Networking
+        public int PacketCollateLength = 0;
     }
 }

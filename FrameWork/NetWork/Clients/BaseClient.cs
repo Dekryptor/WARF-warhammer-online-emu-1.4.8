@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,6 +24,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Collections;
+using System.Threading;
 
 namespace FrameWork
 {
@@ -33,27 +32,17 @@ namespace FrameWork
     {
         // Appeler lorsque le client recoit des données
         private static readonly AsyncCallback ReceiveCallback = OnReceiveHandler;
-        static public bool DisconnectOnNullByte = true;
+        public static bool DisconnectOnNullByte = true;
 
-        private long _Id;
-        public long Id
-        { 
-            get { return _Id; }
-            set { _Id = value; }
-        }
-
-        private int _State = 0;
-        public int State
-        {
-            get { return _State; }
-            set { _State = value; }
-        }
+        public long Id { get; set; }
+        public bool PacketLog = false;
+        public int State { get; set; }
 
         #region Buffer&Socket
 
         protected byte[] _pBuf = new byte[2048];
-        protected int _pBufOffset = 0;
-        protected Socket _socket = null;
+        protected int _pBufOffset;
+        protected Socket _socket;
 
         public byte[] ReceiveBuffer
         { get { return _pBuf; } }
@@ -76,151 +65,121 @@ namespace FrameWork
 
         private Dictionary<ICryptHandler, CryptKey[]> m_crypts = new Dictionary<ICryptHandler, CryptKey[]>();
 
-        public bool AddCrypt(string name, CryptKey CKey,CryptKey DKey)
+        public bool AddCrypt(string name, CryptKey cKey,CryptKey dKey)
         {
             ICryptHandler Handler = Server.GetCrypt(name);
 
             if (Handler == null)
                 return false;
 
-            if (CKey == null)
-                CKey = Handler.GenerateKey(this);
+            if (cKey == null)
+                cKey = Handler.GenerateKey(this);
 
-            if (DKey == null)
-                DKey = Handler.GenerateKey(this);
+            if (dKey == null)
+                dKey = Handler.GenerateKey(this);
 
             Log.Debug("Crypt", "Add crypt : " + name);
 
             if (m_crypts.ContainsKey(Handler))
-                m_crypts[Handler] = new CryptKey[] { CKey , DKey };
+                m_crypts[Handler] = new CryptKey[] { cKey , dKey };
             else 
-                m_crypts.Add(Handler, new CryptKey[] { CKey , DKey } );
+                m_crypts.Add(Handler, new CryptKey[] { cKey , dKey } );
 
             return true;
         }
 
-        public PacketIn DeCrypt(PacketIn packet)
+        public void Decrypt(PacketIn inStream)
         {
             if (m_crypts.Count <= 0)
-                return packet;
+                return;
 
-            ulong opcode = packet.Opcode;
-            ulong size = packet.Size;
-            long StartPos = packet.Position;
-            foreach (KeyValuePair<ICryptHandler, CryptKey[]> Entry in m_crypts)
+            ulong opcode = inStream.Opcode;
+            int size = (int)inStream.Size;
+            int startPos = (int)inStream.Position;
+
+            foreach (KeyValuePair<ICryptHandler, CryptKey[]> entry in m_crypts)
             {
+                //Log.Debug("Decrypt", "Decrypt with " + entry.Key + ",Size="+inStream.Size);
+
+                entry.Key.Decrypt(entry.Value[1], inStream.GetBuffer(), startPos, size);
+
+                inStream.Opcode = opcode;
+                inStream.Size = (ulong)size;
+            }
+
+            //Log.Tcp("Decrypt", inStream.GetBuffer(), 0, inStream.GetBuffer().Length);
+            inStream.Position = startPos;
+        }
+
+        private static readonly ThreadLocal<byte[]> TLSendBuffer = new ThreadLocal<byte[]>(() => new byte[65535]);
+
+        /// <summary>Copies the packet into the thread-local TCP send buffer, encrypting it if required. </summary>
+        /// <param name="packet">A network packet.</param>
+        /// <param name="destOffset">The offset to copy this packet to in the local send buffer.</param>
+        /// <returns>The number of bytes to send, or 0 if encryption failed.</returns>
+        public int EncryptAndBuffer(PacketOut packet, int destOffset)
+        {
+            int packetLength = (int) packet.Length;
+
+            if (packetLength > 65535)
+            { 
+                Log.Error("EncryptAndBuffer", "Packet length is greater than send buffer size!");
+                return 0;
+            }
+
+            // Create a copy of the bytes to be encrypted
+            Buffer.BlockCopy(packet.GetBuffer(), 0, TLSendBuffer.Value, destOffset, packetLength);
+
+            if (m_crypts.Count > 0)
+            {
+                // Figure out the size of the header
+                int headerPos = 0;
+                headerPos += PacketOut.SizeLen;
+                if (PacketOut.OpcodeInLen)
+                    headerPos += packet.OpcodeLen;
+
                 try
                 {
-                    Log.Debug("Decrypt", "Decrypt with " + Entry.Key + ",Size="+packet.Size);
-
-                    byte[] Buf = new byte[size];
-
-                    long Pos = packet.Position;
-                    packet.Read(Buf, 0, (int)Buf.Length);
-                    packet.Position = Pos;
-
-                    PacketIn Pack = Entry.Key.Decrypt(Entry.Value[1], Buf);
-                    packet.Write(Pack.ToArray(), 0, Pack.ToArray().Length);
-
-                    packet.Opcode = opcode;
-                    packet.Size = size;
+                    // Encrypt the copy in-place, skipping the header bytes
+                    foreach (KeyValuePair<ICryptHandler, CryptKey[]> cryptEntry in m_crypts)
+                        cryptEntry.Key.Crypt(cryptEntry.Value[0], TLSendBuffer.Value, destOffset + headerPos, packetLength - headerPos);
                 }
                 catch (Exception e)
                 {
-                    Log.Error("BaseClient", "Decrypt Error : " + e.ToString());
-                    continue;
+                    Log.Error("BaseClient", "Crypt Error : " + e);
+                    return 0;
                 }
             }
 
-            Log.Tcp("Decrypt", packet.ToArray(), 0, packet.ToArray().Length);
-            packet.Position = StartPos;
-            return packet;
-        }
-
-        public PacketOut Crypt(PacketOut packet)
-        {
-            if (m_crypts.Count <= 0)
-                return packet;
-
-            byte[] Packet = packet.ToArray();
-
-            Log.Tcp("SendTCP", Packet, 0, (int)Packet.Length);
-
-            int Hpos = 0;
-            Hpos += PacketOut.SizeLen;
-            if (PacketOut.OpcodeInLen)
-                Hpos += packet.OpcodeLen;
-
-            byte[] Header = new byte[Hpos];
-            byte[] ToCrypt = new byte[(packet.Length-Hpos)];
-            int i;
-
-            for (i = 0; i < Hpos; ++i)
-                Header[i] = Packet[i];
-
-            for (i = Hpos; i < Packet.Length; ++i)
-                ToCrypt[i-Hpos] = Packet[i];
-            
-            try
-            {
-                foreach (KeyValuePair<ICryptHandler, CryptKey[]> Entry in m_crypts)
-                {
-                    ToCrypt = Entry.Key.Crypt(Entry.Value[0], ToCrypt);
-                }
-            }
-            catch (Exception e)
-            {
-                Log.Error("BaseClient", "Crypt Error : " + e.ToString());
-                return packet;
-            }
-
-            PacketOut Out = new PacketOut((byte)0);
-            Out.Opcode = packet.Opcode;
-            Out.OpcodeLen = packet.OpcodeLen;
-            Out.Position = 0;
-            Out.SetLength(0);
-
-            byte[] Total = new byte[Header.Length + ToCrypt.Length];
-
-            for (i = 0; i < Total.Length; ++i)
-            {
-                if (i < Header.Length)
-                    Total[i] = Header[i];
-                else
-                    Total[i] = ToCrypt[i - Header.Length];
-            }
-
-            Out.Write(Total, 0, Total.Length);
-
-            packet.Dispose();
-            return Out;
+            return packetLength;
         }
 
         #endregion
 
-        public string GetIp
+        private string _ip;
+
+        public string GetIp()
         {
-            get
-            {
+                if (!string.IsNullOrEmpty(_ip))
+                    return _ip;
+
                 Socket s = _socket;
                 if (s != null && s.Connected && s.RemoteEndPoint != null)
-                    return s.RemoteEndPoint.ToString();
+                {
+                    _ip = s.RemoteEndPoint.ToString();
+                    return _ip;
+                }
 
                 return "disconnected";
-            }
         }
 
-        protected TCPManager _srvr;
-        public TCPManager Server
-        {
-            get { return _srvr; }
-        }
+        public TCPManager Server { get; }
 
         public BaseClient(TCPManager srvr)
         {
             srvr.GenerateId(this);
 
-            _srvr = srvr;
+            Server = srvr;
 
             if (srvr != null)
                 _pBuf = srvr.AcquirePacketBuffer();
@@ -234,11 +193,11 @@ namespace FrameWork
         {
 
         }
-        protected virtual void OnReceive(byte[] Packet)
+        protected virtual void OnReceive(byte[] packetBuffer)
         {
 
         }
-        public virtual void OnDisconnect()
+        public virtual void OnDisconnect(string reason)
         {
 
         }
@@ -251,11 +210,11 @@ namespace FrameWork
 
                 if (_pBufOffset >= bufSize) //Do we have space to receive?
                 {
-                    Log.Debug("Client", GetIp + " disconnection was due to a buffer overflow!");
+                    Log.Debug("Client", GetIp() + " disconnection was due to a buffer overflow!");
                     Log.Debug("Client", "_pBufOffset=" + _pBufOffset + "; buf size=" + bufSize);
                     Log.Debug("Client", _pBuf.ToString());
 
-                    _srvr.Disconnect(this);
+                    Server.Disconnect(this, "Buffer overflow in BeginReceive");
                 }
                 else
                 {
@@ -278,37 +237,36 @@ namespace FrameWork
 
                 if (numBytes > 0 || (numBytes <=0 && DisconnectOnNullByte == false))
                 {
-                    Log.Tcp(baseClient.GetIp, baseClient.ReceiveBuffer, 0, numBytes);
+                    Log.Tcp(baseClient.GetIp(), baseClient.ReceiveBuffer, 0, numBytes);
 
-                    byte[] buffer = baseClient.ReceiveBuffer;
                     int bufferSize = baseClient.ReceiveBufferOffset + numBytes;
 
-                    byte[] Packet = new byte[bufferSize];
-                    Buffer.BlockCopy(buffer, 0, Packet, 0, bufferSize);
+                    byte[] packetStream = new byte[bufferSize];
+                    Buffer.BlockCopy(baseClient.ReceiveBuffer, 0, packetStream, 0, bufferSize);
                     baseClient.ReceiveBufferOffset = 0;
-                    baseClient.OnReceive(Packet);
+                    baseClient.OnReceive(packetStream);
 
                     baseClient.BeginReceive();
                 }
                else
                 {
-                    Log.Debug("BaseClient","disconnection of client (" + baseClient.GetIp + "), received bytes=" + numBytes);
+                    Log.Debug("BaseClient","disconnection of client (" + baseClient.GetIp() + "), received bytes=" + numBytes);
 
-                    baseClient._srvr.Disconnect(baseClient);
+                    baseClient.Server.Disconnect(baseClient, "Exiting");
                 }
             }
             catch (ObjectDisposedException)
             {
                 if (baseClient != null)
-                    baseClient._srvr.Disconnect(baseClient);
+                    baseClient.Server.Disconnect(baseClient, "ObjectDisposedException in OnReceiveHandler");
             }
             catch (SocketException e)
             {
                 if (baseClient != null)
                 {
-                    Log.Info("BaseClient",string.Format("{0}  {1}", baseClient.GetIp, e.Message));
+                    Log.Debug("BaseClient",string.Format("{0}  {1}", baseClient.GetIp(), e.Message));
 
-                    baseClient._srvr.Disconnect(baseClient);
+                    baseClient.Server.Disconnect(baseClient, $"OnReceiveHandler: { Enum.GetName(typeof(SocketError), e.ErrorCode) } ({ e.Message })");
                 }
             }
             catch (Exception e)
@@ -316,28 +274,33 @@ namespace FrameWork
                 Log.Error("BaseClient",e.ToString());
 
                 if (baseClient != null)
-                    baseClient._srvr.Disconnect(baseClient);
+                    baseClient.Server.Disconnect(baseClient, "Exception in OnReceiveHandler");
             }
         }
+        
+        //private bool _blockSend = false;
 
         public void CloseConnections()
         {
-            if (_socket != null)
+            if (_socket != null && _socket.Connected)
             {
                 try
                 {
+                    //_blockSend = true;
                     _socket.Shutdown(SocketShutdown.Send);
                 }
-                catch
+                catch (Exception e)
                 {
+                    Log.Error("BaseClient", "CloseConnections (Shutdown): "+e);
                 }
 
                 try
                 {
                     _socket.Close();
                 }
-                catch
+                catch (Exception e)
                 {
+                    Log.Error("BaseClient", "CloseConnections (Close): " + e);
                 }
             }
 
@@ -345,19 +308,19 @@ namespace FrameWork
             if (buff != null)
             {
                 _pBuf = null;
-                _srvr.ReleasePacketBuffer(buff);
+                Server.ReleasePacketBuffer(buff);
             }
         }
 
-        public void Disconnect()
+        public void Disconnect(string reason)
         {
             try
             {
-                _srvr.Disconnect(this);
+                Server.Disconnect(this, reason);
             }
             catch (Exception e)
             {
-                    Log.Error("Baseclient", e.ToString());
+                Log.Error("Baseclient", e.ToString());
             }
         }
 
@@ -373,68 +336,194 @@ namespace FrameWork
 		protected bool m_sendingTcp;
 
         // Envoi un packet
-		public void SendPacket(PacketOut packet)
-		{
-			//Fix the packet size
-			packet.WritePacketLength();
-            packet = Crypt(packet);
+        public virtual void SendPacket(PacketOut packet)
+        {
+            if (!packet.Finalized)
+                packet.WritePacketLength();
 
-			//Get the packet buffer
-			byte[] buf = packet.ToArray(); //packet.WritePacketLength sets the Capacity
+            //Send the encrypted packet
+            SendPacketNoBlock(packet);
+            // Crypt(packet);
+            // SendAsynchronousTCP(TLSendBuffer.Value);
+        }
 
-			//Send the buffer
-			SendTCP(buf);
+        public virtual bool SendPacketNoBlock(PacketOut packet)
+        {
+            Log.Debug("BaseClient", $"Socket Connected : {Socket.Connected} Packet : {packet.Opcode}", true);
+            if (!Socket.Connected)
+                return false;
 
-            packet.Dispose();
-		}
+            if (packet == null)
+                return true;
 
-		public void SendTCP(byte[] buf)
+            return SendThreadLocalBuffer(EncryptAndBuffer(packet, 0));
+        }
+
+        public virtual bool SendPacketsNoBlock(List<PacketOut> packetList, int lengthPerSend)
+        {
+            if (!Socket.Connected)
+                return false;
+
+            if (packetList == null)
+                return true;
+
+            int bufferLength = 0;
+
+            // Encrypt the packets
+            for (int index = 0; index < packetList.Count; index++)
+            {
+                // Send if approaching 8KB
+                if (bufferLength > 0 && bufferLength + packetList[index].Length >= lengthPerSend)
+                {
+                    if (!SendThreadLocalBuffer(bufferLength))
+                        return false;
+
+                    // Remove sent packets and reset buffer length
+                    packetList.RemoveRange(0, index);
+                    index = 0;
+                    bufferLength = 0;
+                }
+
+                bufferLength += EncryptAndBuffer(packetList[index], bufferLength);
+            }
+
+            //Log.Info("SendPacketsNoBlock", "Send Length: "+bufferLength);
+
+            return SendThreadLocalBuffer(bufferLength);
+        }
+
+        private bool SendThreadLocalBuffer(int bufferLength)
+        {
+            if (bufferLength == 0)
+                return false;
+
+            // Send the buffer
+            SocketError errorCode;
+
+            //if (_blockSend)
+            //    return false;
+
+            int sentBytes = Socket.Send(TLSendBuffer.Value, 0, bufferLength, SocketFlags.None, out errorCode);
+
+            if (errorCode == SocketError.Success)
+            {
+                if (sentBytes < bufferLength)
+                    Log.Error(GetIp(), $"Partial send ({sentBytes}/{bufferLength})");
+                return true;
+            }
+
+            // Socket write buffer full.
+            if (errorCode == SocketError.WouldBlock)
+                return false;
+
+            Log.Error("BaseClient", "Socket.Send() returned " + errorCode);
+            Disconnect("Socket send failure");
+            return false;
+        }
+
+        public bool SendTCP(byte[] buffer)
+        {
+            if (!Socket.Connected)
+                return false;
+
+            SocketError errorCode;
+            Socket.Send(buffer, 0, buffer.Length, SocketFlags.None, out errorCode);
+
+            if (errorCode == SocketError.Success)
+                return true;
+            if (errorCode == SocketError.WouldBlock)
+                return false;
+
+            Log.Error("BaseClient", "Socket.Send() returned " + errorCode);
+            Disconnect("Socket send failure");
+            return false;
+        }
+
+        public void SendAsynchronousTCP(byte[] buf)
 		{
 			if (m_tcpSendBuffer == null)
 				return;
 
 			//Check if client is connected
-			if (Socket.Connected)
-			{
-				try
-				{
-                        lock (m_tcpQueue)
-                        {
-                            if (m_sendingTcp)
-                            {
-                                m_tcpQueue.Enqueue(buf);
-                                return;
-                            }
+            if (!Socket.Connected)
+                return;
 
-                            m_sendingTcp = true;
-                        }
+            try
+            {
+                lock (m_tcpQueue)
+                {
+                    if (m_sendingTcp)
+                    {
+                        m_tcpQueue.Enqueue(buf);
+                        return;
+                    }
+						
+                    m_sendingTcp = true;
+                }
 
-                        if (m_crypts.Count <= 0)
-                            Log.Tcp("SendTCP", buf, 0, buf.Length);
-                        else
-                            Log.Tcp("Crypted", buf, 0, buf.Length);
+                Log.Tcp(m_crypts.Count <= 0 ? "SendTCP: " : "Crypted: ", buf, 0, buf.Length);
 
-                        //Log.Info("SendTCP", "bug Lenght=" + buf.Length + ",Bufferlenght=" + m_tcpSendBuffer.Length);
-                        Buffer.BlockCopy(buf, 0, m_tcpSendBuffer, 0, buf.Length);
+                Buffer.BlockCopy(buf, 0, m_tcpSendBuffer, 0, buf.Length);
 
-                        int start = Environment.TickCount;
+                int start = Environment.TickCount;
 
-                        Socket.BeginSend(m_tcpSendBuffer, 0, buf.Length, SocketFlags.None, m_asyncTcpCallback, this);
+                Socket.BeginSend(m_tcpSendBuffer, 0, buf.Length, SocketFlags.None, m_asyncTcpCallback, this);
 
-                        int took = Environment.TickCount - start;
-                        if (took > 100)
-                            Log.Notice("BaseClient", "SendTCP.BeginSend took " + took);
-				}
-				catch (Exception e)
-				{
-					// assure that no exception is thrown into the upper layers and interrupt game loops!
-                    Log.Error("BaseClient", "SendTCP : " + e.ToString());
-	    			_srvr.Disconnect(this);
-				}
-			}
+                int took = Environment.TickCount - start;
+                if (took > 100)
+                    Log.Notice("BaseClient","SendTCP.BeginSend took "+ took);
+            }
+            catch (Exception e)
+            {
+                // assure that no exception is thrown into the upper layers and interrupt game loops!
+                Log.Error("BaseClient", "SendTCP : " + e);
+                Server.Disconnect(this, "Exception in SendTCP");
+            }
 		}
 
-		protected static readonly AsyncCallback m_asyncTcpCallback = AsyncTcpSendCallback;
+        public void SendAsynchronousTCP2(byte[] buf)
+        {
+            if (m_tcpSendBuffer == null)
+                return;
+
+            //Check if client is connected
+            if (!Socket.Connected)
+                return;
+
+            try
+            {
+                lock (m_tcpQueue)
+                {
+                    if (m_sendingTcp)
+                    {
+                        m_tcpQueue.Enqueue(buf);
+                        return;
+                    }
+
+                    m_sendingTcp = true;
+                }
+
+               // Log.Tcp(m_crypts.Count <= 0 ? "SendTCP: " : "Crypted: ", buf, 0, buf.Length);
+
+               // Buffer.BlockCopy(buf, 0, m_tcpSendBuffer, 0, buf.Length);
+
+                int start = Environment.TickCount;
+
+                Socket.BeginSend(buf, 0, buf.Length, SocketFlags.None, m_asyncTcpCallback, this);
+
+                //int took = Environment.TickCount - start;
+                //if (took > 100)
+                //    Log.Notice("BaseClient", "SendTCP.BeginSend took " + took);
+            }
+            catch (Exception e)
+            {
+                // assure that no exception is thrown into the upper layers and interrupt game loops!
+                Log.Error("BaseClient", "SendTCP : " + e);
+                Server.Disconnect(this, "Exception in SendTCP");
+            }
+        }
+
+        protected static readonly AsyncCallback m_asyncTcpCallback = AsyncTcpSendCallback;
 
 		protected static void AsyncTcpSendCallback(IAsyncResult ar)
 		{
@@ -488,15 +577,15 @@ namespace FrameWork
             }
 			catch (ObjectDisposedException)
 			{
-                client._srvr.Disconnect(client);
+                client.Server.Disconnect(client, "ObjectDisposedException within TCPSendCallback");
 			}
-			catch (SocketException)
+			catch (SocketException e)
 			{
-                client._srvr.Disconnect(client);
-			}
+                client.Server.Disconnect(client, $"TCPSendCallback: { Enum.GetName(typeof(SocketError), e.ErrorCode) } ({ e.Message })");
+            }
 			catch (Exception)
 			{
-                client._srvr.Disconnect(client);
+                client.Server.Disconnect(client, "Exception within TCPSendCallback");
 			}
 		}
 
@@ -509,9 +598,12 @@ namespace FrameWork
 			return i;
 		}
 
-		public void SendTCPRaw(PacketOut packet)
+		public virtual void SendTCPRaw(PacketOut packet)
 		{
-			SendTCP((byte[]) packet.GetBuffer().Clone());
+            if (!packet.Finalized)
+                packet.WritePacketLength();
+
+            SendAsynchronousTCP2((byte[]) packet.GetBuffer().Clone());
 		}
 
         #endregion

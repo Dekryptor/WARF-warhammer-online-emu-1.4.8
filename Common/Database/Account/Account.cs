@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -27,36 +8,48 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "accounts", DatabaseName = "Accounts")]
+    [DataTable(PreCache = false, TableName = "accounts", DatabaseName = "Accounts", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Account : DataObject
     {
-        private int _AccountId;
-        private string _Username;
-        private string _Password;
-        private string _Ip;
-        private string _Token;
-        private byte _GmLevel;
-        public long LastCheck;
-
-        public Account()
-        {
-        }
+        private int _accountId;
+        private string _username;
+        private string _password;
+        private string _ip;
+        private string _token;
+        private sbyte _gmLevel;
+        private int _banned;
+        private bool _packetLog;
+        private int _adviceBlockEnd;
+        private int _stealthMuteEnd;
+        private string _banReason;
+        private int _lastLogged;
+        private int _lastNameChange;
+        private string _lastPatcherLog;
+        private int _coreLevel;
+        private sbyte _noSurname;
 
         [PrimaryKey(AutoIncrement = true)]
         public int AccountId
         {
-            get { return _AccountId; }
-            set { _AccountId = value; Dirty = true; }
+            get { return _accountId; }
+            set { _accountId = value; Dirty = true; }
+        }
+
+        [DataElement()]
+        public bool PacketLog
+        {
+            get { return _packetLog; }
+            set { _packetLog = value; Dirty = true; }
         }
 
         [DataElement(Unique = true, Varchar = 255)]
         public string Username
         {
-            get { return _Username; }
+            get { return _username; }
             set
             {
-                _Username = value;
+                _username = value;
                 Dirty = true;
             }
         }
@@ -64,24 +57,24 @@ namespace Common
         [DataElement(Varchar = 255)]
         public string Password
         {
-            get { return _Password; }
+            get { return _password; }
             set
             {
-                _Password = value;
+                _password = value;
                 Dirty = true;
             }
         }
 
         [DataElement(Varchar = 255)]
-        public string CryptPassword;
+        public string CryptPassword { get; set; }
 
         [DataElement(Varchar = 255)]
         public string Ip
         {
-            get { return _Ip; }
+            get { return _ip; }
             set
             {
-                _Ip = value;
+                _ip = value;
                 Dirty = true;
             }
         }
@@ -89,33 +82,126 @@ namespace Common
         [DataElement(Varchar = 255)]
         public string Token
         {
-            get { return _Token; }
+            get { return _token; }
             set
             {
-                _Token = value;
+                _token = value;
                 Dirty = true;
             }
         }
 
         [DataElement(AllowDbNull=false)]
-        public byte GmLevel
+        public sbyte GmLevel
         {
-            get { return _GmLevel; }
+            get { return _gmLevel; }
             set
             {
-                _GmLevel = value;
+                _gmLevel = value;
                 Dirty = true;
             }
         }
 
         [DataElement(AllowDbNull = false)]
-        public uint InvalidPasswordCount = 0;
+        public int Banned
+        {
+            get { return _banned; }
+            set
+            {
+                _banned = value;
+                Dirty = true;
+            }
+        }
+
+        [DataElement(AllowDbNull = true)]
+        public string BanReason
+        {
+            get { return _banReason; }
+            set
+            {
+                _banReason = value;
+                Dirty = true;
+            }
+        }
+
+        public bool IsBanned => _banned > TCPManager.GetTimeStamp();
+        public bool IsStealthMuted => _stealthMuteEnd > TCPManager.GetTimeStamp();
+        public bool IsAdviceBlocked => _adviceBlockEnd > TCPManager.GetTimeStamp();
+
+        [DataElement]
+        public int AdviceBlockEnd
+        {
+            get { return _adviceBlockEnd; }
+            set
+            {
+                _adviceBlockEnd = value;
+                Dirty = true;
+            }
+        }
+
+        [DataElement]
+        public int StealthMuteEnd
+        {
+            get { return _stealthMuteEnd; }
+            set
+            {
+                _stealthMuteEnd = value;
+                Dirty = true;
+            }
+        }
+
+        [DataElement]
+        public int CoreLevel
+        {
+            get { return _coreLevel; }
+            set
+            {
+                _coreLevel = value;
+                Dirty = true;
+            }
+        }
 
 
-        static public string ConvertSHA256(string value)
+        [DataElement]
+        public int LastLogged
+        {
+            get { return _lastLogged; }
+            set
+            {
+                _lastLogged = value;
+                Dirty = true;
+            }
+        }
+
+        [DataElement]
+        public int LastNameChanged
+        {
+            get { return _lastNameChange; }
+            set
+            {
+                _lastNameChange = value;
+                Dirty = true;
+            }
+        }
+
+        [DataElement]
+        public string LastPatcherLog
+        {
+            get { return _lastPatcherLog; }
+            set
+            {
+                _lastPatcherLog = value;
+                Dirty = true;
+            }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public uint InvalidPasswordCount { get; set; } = 0;
+
+
+        public static string ConvertSHA256(string value)
         {
             SHA256 sha = SHA256.Create();
-            byte[] data = sha.ComputeHash(Encoding.Default.GetBytes(value));
+            byte[] data = sha.ComputeHash(Encoding.ASCII.GetBytes(value));
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < data.Length; i++)
             {
@@ -123,5 +209,16 @@ namespace Common
             }
             return sb.ToString();
         }
+
+        [DataElement(AllowDbNull = false)]
+        public sbyte noSurname
+        {
+            get { return _noSurname; }
+            set
+            {
+                _noSurname = value;
+                Dirty = true;
+            }
+        }
     }
-}
+} 

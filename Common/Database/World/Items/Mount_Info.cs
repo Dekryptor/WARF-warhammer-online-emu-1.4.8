@@ -26,20 +26,20 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "mount_infos", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "mount_infos", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Mount_Info : DataObject
     {
-        [DataElement()]
-        public uint Id;
+        [PrimaryKey]
+        public uint Id { get; set; }
 
         [DataElement(Unique=true,AllowDbNull=false)]
-        public uint Entry;
+        public uint Entry { get; set; }
 
         [DataElement(AllowDbNull=false)]
-        public UInt16 Speed;
+        public ushort Speed { get; set; }
 
         [DataElement(AllowDbNull = false, Varchar = 255)]
-        public string Name;
+        public string Name { get; set; }
     }
 }

@@ -43,7 +43,7 @@ namespace WorldServer
             if (EventName == "SEND_PACKAGES")
             {
                 List<PacketInfo> P;
-                if (Packets.TryGetValue(Plr._Info.Career, out P))
+                if (Packets.TryGetValue(Plr.Info.Career, out P))
                 {
                     foreach (PacketInfo Packet in P)
                     {
@@ -53,13 +53,16 @@ namespace WorldServer
                     }
                 }
 
-                if (Plr._Info.FirstConnect && Plr.GmLevel == 0)
+                if (Plr.Info.FirstConnect && Plr.GmLevel == 0)
                 {
-                    Plr._Info.FirstConnect = false;
-                    PacketInfo Packet = Intros[Plr._Info.Career];
-                    PacketOut Out = new PacketOut(Packet.Opcode);
-                    Out.Write(Packet.Data, 3, Packet.Data.Length - 3);
-                    Plr.SendPacket(Out);
+                    Plr.Info.FirstConnect = false;
+                    if (!Plr.IsBanned)
+                    {
+                        PacketInfo Packet = Intros[Plr.Info.Career];
+                        PacketOut Out = new PacketOut(Packet.Opcode);
+                        Out.Write(Packet.Data, 3, Packet.Data.Length - 3);
+                        Plr.SendPacket(Out);
+                    }
                 }
             }
         }
@@ -170,7 +173,7 @@ namespace WorldServer
         public byte Opcode;
         public string OpcodeName;
         public byte[] Data;
-        public int Line = 0;
+        public int Line;
     }
 
     public class SniffFile
@@ -178,7 +181,7 @@ namespace WorldServer
         public delegate bool CanAnalyseDelegate(string OpcodeName);
 
         public string FilePath;
-        public int TotalPackets = 0;
+        public int TotalPackets;
         public int Region = 0;
         public List<PacketInfo> Packets = new List<PacketInfo>();
         public Dictionary<byte, PacketsContainer> PacketsAnalyze = new Dictionary<byte, PacketsContainer>();

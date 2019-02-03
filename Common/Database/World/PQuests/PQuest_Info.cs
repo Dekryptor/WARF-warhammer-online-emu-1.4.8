@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -26,41 +7,78 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "pquest_info", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "pquest_info", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class PQuest_Info : DataObject
     {
-        [PrimaryKey()]
-        public UInt32 Entry;
+        [PrimaryKey]
+        public uint Entry { get; set; }
 
         [DataElement(Varchar=255,AllowDbNull=false)]
-        public string Name;
+        public string Name { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public byte Type;
+        public byte Type { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public byte Level;
+        public byte Level { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public UInt16 ZoneId;
+        public ushort ZoneId { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public UInt32 PinX;
+        public uint PinX { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public UInt32 PinY;
-
-        public UInt32 ChapterId;
+        public uint PinY { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public UInt32 TokDiscovered;
+        public uint ChapterId { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public UInt32 TokUnlocked;
+        public byte PQAreaId { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public uint TokDiscovered { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public uint TokUnlocked { get; set; }
 
         public ushort OffX;
         public ushort OffY;
+
+        [DataElement(AllowDbNull = false)]
+        public int GoldChestWorldX { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public int GoldChestWorldY { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public int GoldChestWorldZ { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public byte PQType { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public byte PQDifficult { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public byte Chapter { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public byte PQTier { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public byte PQCraftingBag { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public uint SoundPQEnd { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public uint RespawnID { get; set; }
+
+
+
         public List<PQuest_Objective> Objectives;
     }
 }

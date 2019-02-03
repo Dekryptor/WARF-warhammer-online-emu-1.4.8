@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,14 +24,14 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "renown_infos", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "renown_infos", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Renown_Info : DataObject
     {
         public byte _Level;
         public uint _Renown;
 
-        [DataElement(Unique = true)]
+        [PrimaryKey]
         public byte Level
         {
             get { return _Level; }

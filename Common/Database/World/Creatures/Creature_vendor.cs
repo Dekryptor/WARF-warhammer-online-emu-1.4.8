@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,6 +14,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
+
+/*
+ OLD SYSTEM, removed
  
 using System;
 using System.Collections.Generic;
@@ -26,68 +27,76 @@ using FrameWork;
 
 namespace Common
 {
-    // Valeur Fixe d'un character
-    [DataTable(PreCache = false, TableName = "creature_vendors", DatabaseName = "World")]
-    [Serializable]
-    public class Creature_vendor : DataObject
+// Valeur Fixe d'un character
+[DataTable(PreCache = false, TableName = "creature_vendors", DatabaseName = "World")]
+[Serializable]
+public class Creature_vendor : DataObject
+{
+    public Item_Info Info;
+    private uint _Entry;
+    private uint _ItemId;
+    private uint _Price;
+    private string _ReqItems;
+    private ushort _ReqTokUnlock;
+
+    [PrimaryKey]
+    public uint Entry
     {
-        public Item_Info Info;
-        private uint _Entry;
-        private uint _ItemId;
-        private uint _Price;
-        private string _ReqItems;
-
-        [DataElement(AllowDbNull = false)]
-        public uint Entry
-        {
-            get { return _Entry; }
-            set { _Entry = value; Dirty = true; }
-        }
-
-        [DataElement(AllowDbNull = false)]
-        public uint ItemId
-        {
-            get { return _ItemId; }
-            set { _ItemId = value; Dirty = true; }
-        }
-
-        [DataElement(AllowDbNull = false)]
-        public uint Price
-        {
-            get { return _Price; }
-            set { _Price = value; Dirty = true; }
-        }
-
-        [DataElement(Varchar=255,AllowDbNull = false)]
-        public string ReqItems
-        {
-            get { return _ReqItems; }
-            set 
-            { 
-                _ReqItems = value;
-                string[] Infos = _ReqItems.Split(')');
-                foreach (string Info in Infos)
-                {
-                    if (Info.Length <= 0)
-                        continue;
-
-                    string[] Items = Info.Split(',');
-                    if (Items.Length < 2)
-                        continue;
-
-                    Items[0] = Items[0].Remove(0, 1);
-
-                    UInt16 Count = UInt16.Parse(Items[0]);
-                    uint Entry = uint.Parse(Items[1]);
-
-                    if (!ItemsReq.ContainsKey(Entry))
-                        ItemsReq.Add(Entry, Count);
-                }
-                Dirty = true; 
-            }
-        }
-
-        public Dictionary<uint, UInt16> ItemsReq = new Dictionary<uint, ushort>();
-        public Dictionary<UInt16, Item_Info> ItemsReqInfo = new Dictionary<UInt16, Item_Info>();
+        get { return _Entry; }
+        set { _Entry = value; Dirty = true; }
     }
+
+    [PrimaryKey]
+    public uint ItemId
+    {
+        get { return _ItemId; }
+        set { _ItemId = value; Dirty = true; }
+    }
+
+    [DataElement(AllowDbNull = false)]
+    public uint Price
+    {
+        get { return _Price; }
+        set { _Price = value; Dirty = true; }
+    }
+
+    [DataElement(AllowDbNull = true)]
+    public ushort ReqTokUnlock
+    {
+        get { return _ReqTokUnlock; }
+        set { _ReqTokUnlock = value; Dirty = true; }
+    }
+
+    [DataElement(Varchar=255,AllowDbNull = false)]
+    public string ReqItems
+    {
+        get { return _ReqItems; }
+        set 
+        { 
+            _ReqItems = value;
+            string[] Infos = _ReqItems.Split(')');
+            foreach (string Info in Infos)
+            {
+                if (Info.Length <= 0)
+                    continue;
+
+                string[] Items = Info.Split(',');
+                if (Items.Length < 2)
+                    continue;
+
+                Items[0] = Items[0].Remove(0, 1);
+
+                ushort Count = ushort.Parse(Items[0]);
+                uint Entry = uint.Parse(Items[1]);
+
+                if (!ItemsReq.ContainsKey(Entry))
+                    ItemsReq.Add(Entry, Count);
+            }
+            Dirty = true; 
+        }
+    }
+
+    public Dictionary<uint, ushort> ItemsReq = new Dictionary<uint, ushort>();
 }
+}
+*/

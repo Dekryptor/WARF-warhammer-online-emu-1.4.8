@@ -1,76 +1,68 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-
+﻿using System.Collections.Generic;
+using SystemData;
 using Common;
 using FrameWork;
+using GameData;
+using WorldServer.Services.World;
 
 namespace WorldServer
 {
     public enum EquipSlot
     {
         NONE = 0,
-        MAIN_DROITE = 10,
-        MAIN_GAUCHE = 11,
-        ARME_DISTANCE = 12,
-        MAIN = 13,
-        ETENDARD = 14,
+        MAIN_HAND = 10,
+        OFF_HAND = 11,
+        RANGED_WEAPON = 12,
+        EITHER_HAND = 13,
+        STANDARD = 14,
 
-        TROPHEE_1 = 15,
-        TROPHEE_2 = 16,
-        TROPHEE_3 = 17,
-        TROPHEE_4 = 18,
-        TROPHEE_5 = 19,
+        TROPHY_1 = 15,
+        TROPHY_2 = 16,
+        TROPHY_3 = 17,
+        TROPHY_4 = 18,
+        TROPHY_5 = 19,
 
-        CORPS = 20,
-        GANTS = 21,
-        CHAUSSURE = 22,
-        HEAUME = 23,
-        EPAULE = 24,
-        POCHE_1 = 25,
-        POCHE_2 = 26,
-        DOS = 27,
-        CEINTURE = 28,
+        BODY = 20,
+        GLOVES = 21,
+        BOOTS = 22,
+        HELM = 23,
+        SHOULDER = 24,
+        POCKET_1 = 25,
+        POCKET_2 = 26,
+        BACK = 27,
+        BELT = 28,
 
-        BIJOUX_1 = 31,
-        BIJOUX_2 = 32,
-        BIJOUX_3 = 33,
-        BIJOUX_4 = 34,
+        JEWELLERY_1 = 31,
+        JEWELLERY_2 = 32,
+        JEWELLERY_3 = 33,
+        JEWELLERY_4 = 34
     };
 
     public class Item
     {
         // Créature ou Player
         public Object Owner;
-        public UInt32 _ModelId=0;
-        public UInt16 _SlotId=0;
-        public UInt16 _Count=1;
-        public UInt32 _EffectId;
+        public uint _ModelId;
+        private uint previewModelID;
+        public ushort _SlotId;
+        public ushort _Count = 1;
+        public uint _EffectId;
+        public ushort _PrimaryColor;
+        public ushort _SecondaryColor;
         public long Cooldown;
-
+        private bool _isCreature = false;
         // Player Uniquement
         public Item_Info Info;
-        public Character_item CharItem = null;
+        public CharacterItem CharSaveInfo;
+        public Creature_item CreatureItem { get; protected set; }
+
+        public enum ItemType
+        {
+            Quest = 21,
+            Dye = 27,
+            Crafting = 34,
+            Currency = 36
+        };
 
         public Item(Object Owner)
         {
@@ -81,256 +73,880 @@ namespace WorldServer
             _SlotId = CItem.SlotId;
             _ModelId = CItem.ModelId;
             _EffectId = CItem.EffectId;
+            _PrimaryColor = CItem.PrimaryColor;
+            _SecondaryColor = CItem.SecondaryColor;
             _Count = 1;
+            _isCreature = true;
+            CreatureItem = CItem;
         }
 
-        public bool Load(Character_item Item)
+        public bool Load(CharacterItem itemSaveInfo)
         {
-            if (Item == null)
-                return false;
+            Info = ItemService.GetItem_Info(itemSaveInfo.Entry);
 
-            Info = WorldMgr.GetItem_Info(Item.Entry);
             if (Info == null)
             {
-                Log.Error("ItemInterface", "Load : Info==null,Entry=" + Item.Entry);
+                Log.Error("ItemInterface", "Load : info==null,entry=" + itemSaveInfo.Entry);
                 return false;
             }
 
-            CharItem = Item;
+            CharSaveInfo = itemSaveInfo;
             return true;
         }
-        public bool Load(uint Entry, UInt16 SlotId, UInt16 Count)
+
+        public bool Load(Item_Info info, ushort slotId, ushort count)
         {
-            Info = WorldMgr.GetItem_Info(Entry);
-            if (Info == null)
+            Info = info;
+
+            if (info == null)
                 return false;
 
-            if (Count <= 0)
-                Count = 1;
+            if (count <= 0)
+                count = 1;
 
-            _SlotId = SlotId;
-            _ModelId = Info.ModelId;
-            _Count = Count;
+            _SlotId = slotId;
+            _ModelId = info.ModelId;
+            _Count = count;
+
+            Player player = Owner as Player;
+
+            if (player != null)
+            {
+                if (CharSaveInfo == null)
+                    CreateCharSaveInfo(player.CharacterId);
+
+                if (info.SpellId != 0)
+                    player.AbtInterface.AssignItemCooldown(this);
+            }
+
             return true;
         }
-        public bool Load(Item_Info Info, UInt16 SlotId, UInt16 Count)
-        {
-            this.Info = Info;
-            if (Info == null)
-                return false;
 
-            if (Count <= 0)
-                Count = 1;
+        //public bool LoadExisting(Item_Info info, ushort slotId, ushort count, Item itm)
+        //{
+        //    Info = info;
 
-            _SlotId = SlotId;
-            _ModelId = Info.ModelId;
-            _Count = Count;
-            return true;
-        }
+        //    if (info == null)
+        //        return false;
+
+        //    if (count <= 0)
+        //        count = 1;
+
+        //    _SlotId = slotId;
+        //    _ModelId = info.ModelId;
+        //    _Count = count;
+
+        //    Player player = Owner as Player;
+
+        //    if (player != null)
+        //    {
+        //        CharMgr.CreateItem(itm.CharSaveInfo);
+
+        //        if (info.SpellId != 0)
+        //            player.AbtInterface.AssignItemCooldown(this);
+        //    }
+
+        //    return true;
+        //}
 
         public void Delete()
         {
-            if (CharItem != null)
-                CharMgr.DeleteItem(CharItem);
+            if (CharSaveInfo != null)
+                CharMgr.DeleteItem(CharSaveInfo);
         }
 
-        public Character_item Create(UInt32 CharacterId)
+        public CharacterItem CreateCharSaveInfo(uint characterId)
         {
-            CharItem = new Character_item();
-            CharItem.CharacterId = CharacterId;
-            CharItem.Counts = _Count;
-            CharItem.Entry = Info.Entry;
-            CharItem.ModelId = _ModelId;
-            CharItem.SlotId = _SlotId;
-            CharMgr.CreateItem(CharItem);
-
-            return CharItem;
-        }
-        public Character_item Save(UInt32 CharacterId)
-        {
-            if (CharItem != null)
+            CharSaveInfo = new CharacterItem
             {
-                CharItem.CharacterId = CharacterId;
-                CharMgr.Database.SaveObject(CharItem);
-            }
-            else 
-                Create(CharacterId);
+                CharacterId = characterId,
+                Counts = _Count,
+                Entry = Info.Entry,
+                ModelId = _ModelId,
+                SlotId = _SlotId,
+                PrimaryDye = 0,
+                SecondaryDye = 0,
+                BoundtoPlayer = false
+            };
+            CharMgr.CreateItem(CharSaveInfo);
 
-            return CharItem;
+            return CharSaveInfo;
+        }
+        public CharacterItem Save(uint characterId)
+        {
+            if (CharSaveInfo != null)
+            {
+                if (CharSaveInfo.CharacterId != characterId)
+                    CharSaveInfo.CharacterId = characterId;
+                CharMgr.Database.SaveObject(CharSaveInfo);
+            }
+            else // This should no longer be necessary.
+                CreateCharSaveInfo(characterId);
+
+            return CharSaveInfo;
         }
 
-        public Item_Info GetTalisman(byte SlotId)
+        public Talisman GetTalisman(byte SlotId)
         {
-            if (CharItem == null)
+            if (CharSaveInfo == null)
                 return null;
 
-            if (CharItem._Talismans.Count <= SlotId)
-                return null;
+            Talisman tal = null;
 
-            return WorldMgr.GetItem_Info(CharItem._Talismans[SlotId]);
+            foreach (Talisman tali in CharSaveInfo._Talismans)
+            {
+                if (tali.Slot == SlotId && (tal == null || tali.Fused == 1))
+                    tal = tali;
+            }
+
+            return tal;
         }
 
-        static public void BuildItem(ref PacketOut Out,Item Itm,Item_Info Info,ushort SlotId,ushort Count)
+        public bool AddTalisman(uint entry, byte SlotId)
         {
-            SlotId = SlotId == 0 ? (Itm == null ? SlotId : Itm.SlotId ) : SlotId;
-            Count = Count == 0 ? (Itm == null ? Count : Itm.Count) : Count;
-            Info = Info == null ? (Itm == null ? null : Itm.Info) : Info;
-            
+            if (CharSaveInfo == null)
+                return false;
 
-            if(SlotId != 0)
-                Out.WriteUInt16(SlotId); // Valid 1.4.8
+            Item_Info info = ItemService.GetItem_Info(entry);
 
-            Out.WriteByte(0);  // Valid 1.4.8
-            Out.WriteUInt32((uint)(Info != null ? Info.Entry : 0));  // Valid 1.4.8
+            if (info.Type != 23)
+                return false;
 
-            if (Info == null)
-                return;
+            if (Info.MinRank < info.MinRank)
+                return false;
 
-            Out.WriteUInt16((UInt16)Info.ModelId);  // Valid 1.4.8
-            Out.Fill(0, 7);  // Valid 1.4.8
-            Out.WriteUInt16(Info.SlotId); // Valid 1.4.8
-            Out.WriteByte(Info.Type);  // Valid 1.4.8
-
-            Out.WriteByte(Info.MinRank); // Min Level
-            Out.WriteByte(Info.ObjectLevel); // 1.3.5, Object Level
-            Out.WriteByte(Info.MinRenown); // 1.3.5, Min Renown
-            Out.WriteByte(Info.MinRenown); // ?
-            Out.WriteByte(Info.UniqueEquiped); // Unique - Equiped
-            Out.WriteByte(Info.Rarity);
-            Out.WriteByte(Info.Bind);
-            Out.WriteByte(Info.Race);
-            Out.WriteUInt32(Info.Career);
-            Out.WriteUInt32(0);
-            Out.WriteUInt32(Info.SellPrice);
-
-            Out.WriteUInt16((UInt16)(Count > 0 ? Count : 1));
-            Out.WriteUInt16((UInt16)(Count > 0 ? Count : 1));
-
-            Out.WriteUInt32(0); // Valid 1.4.8
-
-            Out.WriteUInt32(Info.Skills);  // Valid 1.4.8
-            Out.WriteUInt16(Info.Dps > 0 ? Info.Dps : Info.Armor);  // Valid 1.4.8
-            Out.WriteUInt16(Info.Speed);  // Valid 1.4.8
-            Out.WritePascalString(Info.Name);  // Valid 1.4.8
-
-            Out.WriteByte((byte)Info._Stats.Count);  // Valid 1.4.8
-            foreach (KeyValuePair<byte, UInt16> Key in Info._Stats)
+            foreach (Talisman tali in CharSaveInfo._Talismans)
             {
-                Out.WriteByte(Key.Key);
-                Out.WriteUInt16(Key.Value);
-                Out.Fill(0, 5);
+                if (tali.Slot == SlotId && tali.Fused == 1 || info.Crafts == ItemService.GetItem_Info(tali.Entry).Crafts && tali.Slot != SlotId)
+                    return false;
+            }
+            CharSaveInfo._Talismans.Add(new Talisman(entry, SlotId, 1, 0));
+            return true;
+        }
+
+        public uint RemoveTalisman(byte SlotId)
+        {
+            uint item = 0;
+            foreach (Talisman tali in CharSaveInfo._Talismans)
+            {
+                if (tali.Slot == SlotId && tali.Fused == 1)
+                    item = tali.Entry;
             }
 
-            Out.WriteByte(0); // Equip Effects
-
-            Out.WriteByte((byte)Info._Spells.Count); // OK
-            foreach (KeyValuePair<UInt32, UInt32> Kp in Info._Spells)
+            for (int i = 0; i < CharSaveInfo._Talismans.Count; i++)
             {
-                Out.WriteUInt32(Kp.Key);
-                Out.WriteUInt32(Kp.Value);
+                if (CharSaveInfo._Talismans[i].Slot == SlotId && CharSaveInfo._Talismans[i].Fused == 1)
+                    CharSaveInfo._Talismans.RemoveAt(i);
             }
-            // (uint32)Entry, uint16 X, uint16 Y
+            return item;
+        }
 
+        public void FuseTalisman()
+        {
+            List<Talisman> unfused = new List<Talisman>();
 
-            Out.WriteByte((byte)Info._Crafts.Count); // OK
-            foreach (KeyValuePair<byte, ushort> Kp in Info._Crafts)
+            foreach (Talisman tali in CharSaveInfo._Talismans)
             {
-                Out.WriteByte(Kp.Key);
-                Out.WriteUInt16(Kp.Value);
-            }
-
-            Out.WriteByte(0); // ??
-
-            Out.WriteByte(Info.TalismanSlots);
-            Item_Info TalismanInfo = null;
-            for (int i = 0; i < Info.TalismanSlots; ++i)
-            {
-                if (Itm != null)
-                    TalismanInfo = Itm.GetTalisman((byte)i);
-
-                if (TalismanInfo == null)
-                    Out.WriteUInt32(0); // Entry;
-                else
+                if (tali.Fused == 1)
                 {
-                    Out.WriteUInt32(TalismanInfo.Entry);
-                    Out.WritePascalString(TalismanInfo.Name);
-                    Out.Fill(0, 15);
+                    unfused.Add(tali);
+                }
+            }
+            for (int i = 0; i < CharSaveInfo._Talismans.Count; i++)
+            {
+                foreach (Talisman tali in unfused)
+                {
+                    if (CharSaveInfo._Talismans[i].Slot == tali.Slot && CharSaveInfo._Talismans[i].Fused == 0)
+                        CharSaveInfo._Talismans.RemoveAt(i);
+                }
+            }
+            foreach (Talisman tali in CharSaveInfo._Talismans)
+            {
+                if (tali.Fused == 1)
+                {
+                    tali.Fused = 0;
                 }
             }
 
-            Out.WritePascalString(Info.Description);
+        }
 
-            Out.Write(Info.Unk27);
+        public List<uint> AbortFuseTalisman()
+        {
+            List<uint> unfused = new List<uint>();
 
-            /*Out.WriteByte(0);
-            Out.WriteByte(0);
-            Out.WriteByte(0);
-            Out.WriteByte(0);
+            if (CharSaveInfo == null)
+                return unfused;
 
-            Out.WriteUInt16(0x0302);
+            foreach (Talisman tali in CharSaveInfo._Talismans)
+            {
+                if (tali.Fused == 1)
+                    unfused.Add(tali.Entry);
+            }
 
-            Out.Fill(0, 8);
-            Out.WriteByte(0); // Type , Culture, etc etc
-            Out.WriteByte(0); // Type, Recipian , Soil , etc etc
-            Out.Fill(0, 11);*/
+            for (int i = CharSaveInfo._Talismans.Count - 1; i >= 0; --i)
+            {
+                if (CharSaveInfo._Talismans[i].Fused == 1)
+                    CharSaveInfo._Talismans.RemoveAt(i);
+            }
+
+            return unfused;
+        }
+
+        public List<Talisman> GetTalismans()
+        {
+            if (CharSaveInfo == null)
+                return null;
+
+            return CharSaveInfo._Talismans;
+
+        }
+
+        public ushort GetPrimaryDye()
+        {
+            if (CharSaveInfo == null)
+                return 0;
+
+            return CharSaveInfo.PrimaryDye;
+        }
+
+        public ushort GetSecondaryDye()
+        {
+            if (CharSaveInfo == null)
+                return 0;
+
+            return CharSaveInfo.SecondaryDye;
+        }
+
+        // Writes approximately: (100 + info._Stats.Count * 8 + info.EffectsList.Count * 6 + info.SpellId > 0 ? 8 : 1 + info.Type == 23 ? info.Crafts.Count * 3 : 1 + info.Description.Length + info.TalismanSlots * 47)
+        public static void BuildItem(ref PacketOut Out, Item itm, Item_Info info, MailItem mail, ushort SlotId, ushort Count, Player Plr = null,bool frombuildrepairitem = false)
+        {
+            SlotId = SlotId == 0 ? (itm?.SlotId ?? SlotId) : SlotId;
+            Count = Count == 0 ? (itm?.Count ?? Count) : Count;
+            info = info ?? itm?.Info;
+            bool lootbag = false;
+
+            
+           
+
+                if (mail != null)
+                    info = ItemService.GetItem_Info(mail.id);
+
+                if (SlotId != 0 && !frombuildrepairitem)
+                    Out.WriteUInt16(SlotId);
+                
+            if (info != null && info.Entry >= 2500000 && info.Entry < 2600000)
+            {
+                BuildRepairableItem(ref Out, itm, info, mail, SlotId, Count, Plr);
+                return;
+            }
+            if(!frombuildrepairitem)
+            Out.WriteByte(0);    // repairable item
+                Out.WriteUInt32(info?.Entry ?? 0);
+
+                if (info == null)
+                    return;
+
+                //if (info.Bind == 1 || (info.Bind == 2 && itm != null && itm.BoundtoPlayer))
+                //    Out.WriteUInt32(info.Entry << 2);
+                //else
+                //    Out.WriteUInt32(info.Entry);
+
+                if (info.Entry == 9980 || info.Entry == 9940 || info.Entry == 9941 || info.Entry == 9942 || info.Entry == 9943)  // lootbags
+                    lootbag = true;
+
+
+                Out.WriteUInt16((ushort)info.ModelId);  // Valid 1.4.8
+
+                //Appearance
+                if (itm != null && itm.AltAppearanceEntry > 0 && itm.Info.Type != 24)
+                {
+                    Item_Info tmp = ItemService.GetItem_Info(itm.AltAppearanceEntry);
+
+                    if (tmp == null)
+                    {
+                        itm.AltAppearanceEntry = 0;
+                        Out.Fill(0, 7);
+                    }
+                    else
+                    {
+                        Out.WriteUInt16((ushort)tmp.ModelId); // DisplayId
+                        Out.WriteUInt32(itm.AltAppearanceEntry); // Id
+                        Out.WritePascalString(tmp.Name); //name
+                    }
+                }
+                else
+                {
+                    Out.Fill(0, 7);
+                }
+
+                Out.WriteUInt16(info.SlotId);  // Valid 1.4.8
+                Out.WriteByte(info.Type);  // Valid 1.4.8
+
+                Out.WriteByte(info.MinRank); // Min Level
+                Out.WriteByte(info.ObjectLevel); // 1.3.5, Object Level
+                Out.WriteByte(info.MinRenown); // 1.3.5, Min Renown
+                Out.WriteByte(info.MinRenown); // ?
+                Out.WriteByte(info.UniqueEquiped); // Unique - Equiped
+
+                Out.WriteByte(info.Rarity);
+                Out.WriteByte(info.Bind);  // This byte should be part of race byte
+                Out.WriteByte(info.Race);
+
+
+                // Trophys have some extra bytes
+                if (info.Type == (byte)ItemTypes.ITEMTYPES_TROPHY)
+                {
+                    Out.WriteUInt32(0);
+                    Out.WriteUInt16(0x00);
+                }
+
+                if (info.Type == (byte)ItemTypes.ITEMTYPES_ENHANCEMENT)
+                {
+                    Out.WriteUInt32(0);
+                }
+
+                if (SlotId != 0 && info.Type == 24) // Trophy 
+                {
+                    Out.WriteUInt16(0);
+                    Out.WriteUInt16((ushort)itm.AltAppearanceEntry);
+                }
+                else
+                    Out.WriteUInt32(info.Career);
+
+
+                Out.WriteUInt16(info.BaseColor1);  // basecolor
+                Out.WriteUInt16(info.BaseColor2);
+
+
+                Out.WriteUInt32(info.SellPrice);
+
+                Out.WriteUInt16(info.MaxStack);
+
+                if (mail != null)
+                    Out.WriteUInt16((ushort)(mail.count > 0 ? mail.count : 1));
+                else
+                    Out.WriteUInt16((ushort)(Count > 0 ? Count : 1));
+
+                Out.WriteUInt32(info.ItemSet);
+
+                Out.WriteUInt32(info.Skills);  // Valid 1.4.8
+                Out.WriteUInt16(info.Dps > 0 ? info.Dps : info.Armor);  // Valid 1.4.8
+                Out.WriteUInt16(info.Speed);  // Valid 1.4.8
+
+                Out.WritePascalString(info.Name);  // Valid 1.4.8  + (info.Bind == 1 || (info.Bind == 2 && itm != null && itm.BoundtoPlayer) ? "_" : "" )
+
+                //66 Bytes + info.Name.Length
+
+                Out.WriteByte((byte)info._Stats.Count);  // Valid 1.4.8
+                foreach (KeyValuePair<byte, ushort> Key in info._Stats)
+                {
+                    if (Key.Key == (byte)Stats.AutoAttackSpeed)
+                    {
+                        Out.WriteByte(Key.Key);
+                        Out.WriteUInt16(Key.Value);
+                        Out.Fill(1, 5);
+                    }
+                    else
+                    {
+                        Out.WriteByte(Key.Key);
+                        Out.WriteUInt16(Key.Value);
+                        Out.Fill(0, 5);
+                    }
+                }
+
+                Out.WriteByte((byte)info.EffectsList.Count);
+                foreach (ushort effect in info.EffectsList)
+                {
+                    Out.WriteUInt16(effect);
+                    Out.WriteUInt32(0);
+                }
+
+                if (info.SpellId == 0)
+                    Out.WriteByte(0);
+                else
+                {
+                    Out.WriteByte(1); // (byte)info._Spells.Count OK
+
+                    Out.WriteUInt32(info.SpellId);
+                    Out.WriteUInt16(AbilityMgr.GetCooldownFor(info.SpellId));   // cooldown time info
+
+                    if (Plr == null || itm?.CharSaveInfo == null)
+                        Out.WriteUInt16(0);   // current cooldown
+                    else
+                        Out.WriteUInt16(itm.CharSaveInfo.RemainingCooldown);
+                }
+
+                // (uint32)entry, uint16 X, uint16 Y
+
+                if (info.Type == 23)   // talisman use craft to store its buff type 
+                    Out.WriteByte(0);
+                else
+                {
+                    Out.WriteByte((byte)info._Crafts.Count); // OK
+                    foreach (KeyValuePair<byte, ushort> Kp in info._Crafts)
+                    {
+                        Out.WriteByte(Kp.Key);
+                        Out.WriteUInt16(Kp.Value);
+                    }
+                }
+                Out.WriteByte(0); // ??
+
+                if (lootbag)
+                {
+                    Out.WriteByte(0);
+                }
+                else
+                {
+                    Out.WriteByte(info.TalismanSlots);
+                    Talisman talis = null;
+                    for (int i = 0; i < info.TalismanSlots; ++i)
+                    {
+                        if (itm != null)
+                            talis = itm.GetTalisman((byte)i);
+                        else if (mail != null)
+                        {
+                            talis = mail.GetTalisman((byte)i);
+                        }
+
+                        if (talis == null)
+                            Out.WriteUInt32(0); // entry;
+                        else
+                        {
+                            Item_Info talismanInfo = ItemService.GetItem_Info(talis.Entry);
+
+                            // Out.Fill(0, 2);
+
+                            Out.WriteByte(0); // slot ???
+                            Out.WriteByte(0);
+                            Out.WriteUInt16((ushort)talismanInfo.ModelId);
+                            Out.WriteByte(talis.Fused); // 0 fused 1 unfused
+                            Out.WriteByte(0);
+                            Out.WritePascalString(talismanInfo.Name);
+                            Out.WriteByte((byte)talismanInfo._Stats.Count); // Valid 1.4.8
+                            foreach (KeyValuePair<byte, ushort> Key in talismanInfo._Stats)
+                            {
+                                Out.WriteByte(Key.Key);
+                                Out.WriteUInt16(Key.Value);
+                                Out.WriteUInt32(talis.Timer);
+                                Out.WriteByte(0);
+                                //  Out.Fill(0, 5);
+                            }
+                            Out.WriteByte((byte)talismanInfo.EffectsList.Count);
+                            foreach (ushort effect in talismanInfo.EffectsList)
+                            {
+                                Out.WriteUInt16(effect);
+                                Out.WriteUInt32(0);
+                            }
+                            //if (talismanInfo.SpellId == 0)
+                            //    Out.WriteByte(0);
+                            //else
+                            //{
+                            //    Out.WriteByte(1); // (byte)talismanInfo._Spells.Count
+
+                            //    Out.WriteUInt16(talismanInfo.SpellId);
+                            //    Out.WriteUInt32(AbilityMgr.GetCooldownFor(talismanInfo.SpellId));
+                            //}
+                            Out.Fill(0, 3);
+                            Out.WriteUInt16(0x041C);
+                        }
+
+                    }
+                }
+
+                Out.WritePascalString(info.Description);
+
+                // Note from wash : this algorithm updates shared 
+
+                byte[] Unks = info.Unk27;
+
+                //if (info.Bind == 1 && (itm == null || !itm.BoundtoPlayer))
+                //    Unks[5] = (byte)(4);  // bind on pickup, if set to true for one item, all items with have this flag active client side
+                //else if (info.Bind == 2 && (itm == null || !itm.BoundtoPlayer)) //
+                //    Unks[5] = (byte)(8);   // bind on equip, if set to true for one item, all items with have this flag active client side
+                //else
+                //    Unks[5] = 0;
+
+                //Unks[5] = 8;
+
+                if (info.DyeAble)
+                    Unks[6] = (byte)(Unks[6] | 1); // dyeable
+                if (info.Salvageable)
+                    Unks[6] = (byte)(Unks[6] | 2); // scavangable
+                                                   // Prevents sale
+                                                   //   Unks[6] = (byte) (Unks[6] | 32);
+                                                   // Allow Conversion text (Ctrl+Right Click)
+                                                   //   Unks[6] = (byte) (Unks[6] | 128);
+
+
+                //if (itm != null && itm.BoundtoPlayer) // info.Bind == 1
+                //    Unks[8] = (byte)(1); // bound to player, if set to true for one item, all items with have this flag active client side
+                //else
+                //    Unks[8] = (byte)(0);
+
+
+                Out.WriteByte(Unks[0]); // londo : wut ?
+                Out.WriteByte(Unks[1]); // londo : getUnk7
+                Out.WriteByte(Unks[2]); // londo : getUnk8
+                Out.WriteByte(Unks[3]); // londo : getNoChargeLeftDontDelete
+                Out.WriteByte(Unks[4]); // londo : flag count
+
+                if (info.Bind == 1 && (itm == null || !itm.BoundtoPlayer))
+                    Out.WriteByte(4);  // bind on pickup, if set to true for one item, all items with have this flag active client side
+                else if (info.Bind == 2 && (itm == null || !itm.BoundtoPlayer)) //
+                    Out.WriteByte(8);   // bind on equip, if set to true for one item, all items with have this flag active client side
+                else
+                    Out.WriteByte(0);
+
+                Out.WriteByte(Unks[6]); // dyeable from londo (+ scavangable from RoR ?)
+                Out.WriteByte(Unks[7]); // 0 from londo
+
+                if (info.Bind == 2 && itm != null && itm.BoundtoPlayer)
+                    Out.WriteByte(1);
+                else
+                    Out.WriteByte(0);
+
+                //Unks[19] = (byte)(Unks[19] | 5); // potion cd
+
+                // 4 can crash the client if changed
+                // 5: if 1, hides the crafting level requirement. if 2, shows it.
+                // 7 with value of 8 can suppress the Item Level text
+                //for (int i = 0; i < 9; i++) //9
+                //{
+                //    Out.WriteByte(Unks[i]);
+                //}
+
+                if (lootbag)
+                {
+                    Out.WriteUInt16(0);
+                    Out.WriteUInt16(0);
+                }
+                else
+                {
+                    if (mail != null)
+                    {
+                        Out.WriteUInt16(mail.primary_dye);
+                        Out.WriteUInt16(mail.secondary_dye);
+                    }
+                    else
+                    {
+                        Out.WriteUInt16(itm?.GetPrimaryDye() ?? 0);
+                        Out.WriteUInt16(itm?.GetSecondaryDye() ?? 0);
+                    }
+                }
+
+                // Overwrite Unks27 with the TwoHanded flag
+                if (info.TwoHanded)
+                    Unks[26] = (byte)(Unks[26] | 1); // bitwise? oh well better to be safe.
+
+
+
+                if ((info.SlotId == 14 || info.SlotId == 27) && Plr?.GldInterface.Guild != null)
+                {
+                    Out.Fill(0, 7);
+                    Out.WriteByte(1); // 1, Out, 1, 2
+                    Plr.GldInterface.Guild.BuildHeraldry(Out);
+                    Out.WriteByte(1);
+                    Out.WriteByte(1);
+                    Out.Fill(0, 6);
+                }
+                else
+                {
+                    // 14: Skill level 
+                    // 15: Flags for Cultivating
+                    // 20: Crashes the client if nonzero... is set on the Fleet Stag Mantle
+                    // 21-24: Seconds until decayed
+                    // 26: two-handed flag
+                    for (int i = 13; i < /*21*/ 27; i++)
+                        Out.WriteByte(Unks[i]);
+
+                    /*
+                    21-26:
+                    Out.WriteUInt32(0); // Seconds until decayed. Set on the Stag Mantle but doesn't show, possible double meaning based on value 20
+
+                    Out.WriteByte(Unks[25]);
+                    Out.WriteByte(Unks[26]);
+                    */
+                }
+
+
+                //Out.Write(Unks);
+
+                /*Out.WriteByte(0);
+                Out.WriteByte(0);
+                Out.WriteByte(0);
+                Out.WriteByte(0);
+
+                Out.WriteUInt16(0x0302);
+
+                Out.Fill(0, 8);
+                Out.WriteByte(0); // Type , Culture, etc etc
+                Out.WriteByte(0); // Type, Recipian , Soil , etc etc
+                Out.Fill(0, 11);*/
+           
+        }
+
+        public static void BuildRepairableItem(ref PacketOut Out, Item itm, Item_Info info, MailItem mail, ushort SlotId, ushort Count, Player Plr = null)
+        {
+            Out.WriteByte(1);    // repairable item
+            Out.WritePascalString(info.Name);
+
+
+            string[] items = info.Craftresult.Split(';');
+            Item_Info RepItemInfo = null;
+
+            uint itemlvl=0;
+            byte rarety=0;
+
+            foreach(string ritem in items)
+            {
+                
+                Item_Info RitemInfo = ItemService.GetItem_Info(uint.Parse(ritem));
+                rarety = RitemInfo.Rarity;
+                itemlvl = RitemInfo.MinRank;
+
+                if (ItemsInterface.CanUse(RitemInfo, Plr,false,false))
+                {
+                    RepItemInfo = RitemInfo;
+                    break;
+                }
+            }
+            if(rarety < 1)
+                rarety = 1;
+            if (itemlvl < 1)
+                itemlvl = 1;
+
+            if (RepItemInfo != null)
+            {
+
+                Out.WritePacketString(@"|00 00 0F 67|......b.L...]...|"); //Icon
+
+                Out.WriteUInt32(20 * itemlvl * 6 * rarety * 2);  // repair costs
+                Out.WritePacketString(@"|00 00 07 62|......b.L...]...|"); //?? 00 00 07 62
+
+                BuildItem(ref Out,null, RepItemInfo,null,0,1,Plr,true);
+            }
+            else
+            {
+                Out.WritePacketString(@" | 00 00 0F 67 |........|");
+                Out.WriteUInt32(20 * itemlvl * 6 * rarety * 2);  // repair costs
+
+                Out.WritePacketString(@"|00 00 07 62 | apon...g.......b |
+                                        | 00 4C B0 A5 0F 67 00 00 00 00 00 00 00 00 00 00 |.L...g..........|
+                                        | 00 24 00 00 00 02 00 00 00 00 00 00 00 00 00 00 |.$..............|
+                                        | 00 00 02 1C 00 01 00 01 00 00 00 00 00 00 00 00 |................|
+                                        | 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 |................|
+                                        | 03 42 00 00|........|");
+                if (info.Bind == 1)
+                    Out.WriteByte(4);  // bind on pickup, if set to true for one item, all items with have this flag active client side
+                else if (info.Bind == 2) //
+                    Out.WriteByte(8);   // bind on equip, if set to true for one item, all items with have this flag active client side
+                else
+                    Out.WriteByte(0);
+                Out.WritePacketString(@" | 00 00 00 00 00 00 00 00 00 00 00 |.B..............|
+                                        | 00 00 00 00 00 00 00|.B..............|");
+            }
+        }
+
+            public bool CanBeUsedBy(Player player)
+        {
+            // Career restrictions.
+            if (Info.Career != 0 && (Info.Career & (1 << player.Info.CareerLine - 1)) == 0)
+            {
+                player.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEST_ITEM_PLAYER_INVALID_CAREER);
+                return false;
+            }
+
+            // Race restrictions. 
+            if (Info.Race != 0 && (Info.Race & (1 << player.Info.Race - 1)) == 0)
+            {
+                player.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEST_ITEM_PLAYER_INVALID_RACE);
+                return false;
+            }
+
+            if (Info.MinRank > 0 && player.AdjustedLevel < Info.MinRank)
+            {
+                player.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEST_ITEM_PLAYER_LEVEL_TOO_LOW);
+                return false;
+            }
+
+            if (Info.MinRenown > 0 && player.RenownRank < Info.MinRenown)
+            {
+                player.SendLocalizeString("", ChatLogFilters.CHATLOGFILTERS_USER_ERROR, Localized_text.TEST_ITEM_PLAYER_RENOWN_TOO_LOW);
+                return false;
+            }
+
+            return true;
         }
 
         #region Accessor
 
-        public UInt16 SlotId
+        public ushort SlotId
         {
             get
             {
-                if (CharItem != null)
-                    return CharItem.SlotId;
-                return _SlotId;
+                return CharSaveInfo?.SlotId ?? _SlotId;
             }
             set
             {
-                if (CharItem != null)
-                    CharItem.SlotId = value;
+                if (CharSaveInfo != null)
+                    CharSaveInfo.SlotId = value;
                 else
                     _SlotId = value;
             }
         }
 
-        public UInt16 Count
+        public ushort Count
         {
             get
             {
-                if (CharItem != null)
-                    return CharItem.Counts;
-                else
-                    return _Count;
+                return CharSaveInfo?.Counts ?? _Count;
             }
             set
             {
-                if (CharItem != null)
-                    CharItem.Counts = value;
+                if (CharSaveInfo != null)
+                    CharSaveInfo.Counts = value;
                 else
                     _Count = value;
             }
         }
 
-        public UInt32 ModelId
+        public uint ModelId
         {
-            get 
-            { 
-                if (Info != null) 
-                    return Info.ModelId; 
+            get
+            {
+                if (PreviewModelID == 0)
+                    return Info?.ModelId ?? _ModelId;
                 else
-                    return _ModelId; 
+                    return PreviewModelID;
             }
-            set{ _ModelId = value; }
+            set { _ModelId = value; }
         }
 
+        public bool BoundtoPlayer
+        {
+            get
+            {
+                return CharSaveInfo != null && CharSaveInfo.BoundtoPlayer;
+            }
+            set
+            {
+                if (CharSaveInfo != null)
+                    CharSaveInfo.BoundtoPlayer = value;
+            }
+        }
+        public uint AltAppearanceEntry
+        {
+            get
+            {
+                return CharSaveInfo?.Alternate_AppereanceEntry ?? 0;
+            }
+            set
+            {
+                if (CharSaveInfo != null)
+                    CharSaveInfo.Alternate_AppereanceEntry = value;
+            }
+        }
+
+        public uint PreviewModelID
+        {
+            get
+            {
+                return previewModelID;
+            }
+
+            set
+            {
+                previewModelID = value;
+            }
+        }
+
+
+
         #endregion
+
+        public byte GetInventoryFlags()
+        {
+            byte flags = 0;
+
+            if (!_isCreature)
+            {
+                // Trophy
+                if (SlotId > 14 && SlotId < 20)
+                {
+                    flags |= (byte) ItemFlags.Trophy;
+                    return flags;
+                }
+
+                if (SlotId == (int) EquipSlot.STANDARD)
+                {
+                    flags |= (byte) ItemFlags.Heraldry;
+                    return flags;
+                }
+
+                if (SlotId == (int) EquipSlot.BACK)
+                {
+                    Player player = Owner as Player;
+
+                    if (player?.GldInterface.Guild != null)
+                    {
+                        flags |= (byte) ItemFlags.Heraldry;
+                        return flags;
+                    }
+                }
+            }
+
+            ushort priColor = GetPrimaryColor();
+            ushort secColor = GetSecondaryColor();
+
+            if (priColor > 0 || secColor > 0)
+                flags |= (byte)ItemFlags.ColorOverride;
+            if (priColor > 0xFF)
+                flags |= (byte)ItemFlags.PriColorExpansion;
+            if (secColor > 0xFF)
+                flags |= (byte)ItemFlags.SecColorExpansion;
+
+            return flags;
+        }
+
+        public ushort GetModel()
+        {
+            if (_isCreature)
+                return (ushort)_ModelId;
+
+            return (ushort)(AltAppearanceEntry > 0 ? (ushort)ItemService.GetItem_Info(AltAppearanceEntry).ModelId : ModelId);
+        }
+
+        public ushort GetPrimaryColor()
+        {
+            if (_isCreature)
+                return _PrimaryColor;
+
+            ushort priColor = GetPrimaryDye();
+
+            if (priColor == 0 && Info != null)
+                priColor = Info.BaseColor1;
+
+            return priColor;
+        }
+
+        public ushort GetSecondaryColor()
+        {
+            if (_isCreature)
+                return _SecondaryColor;
+
+            ushort secColor = GetSecondaryDye();
+
+            if (secColor == 0 && Info != null)
+                secColor = Info.BaseColor2;
+
+            return secColor;
+        }
     }
 
     /*
      * public struct ItemSpells
 {
-    public UInt32 Entry;
+    public UInt32 entry;
     public UInt16 X,Y;
 }
 
@@ -347,60 +963,60 @@ public struct ItemStat
 
 public struct ItemTalisman
 {
-    public UInt32 Entry;
+    public UInt32 entry;
     public UInt16 Unk;
     public string Name;
 }
      * 
      * static public ItemInformation DecodeItem(PacketIn Packet)
     {
-        ItemInformation Info = new ItemInformation();
+        ItemInformation info = new ItemInformation();
 
         Packet.GetUint16(); // SlotId
         Packet.GetUint8();
 
-        Info.Entry = Packet.GetUint32();
+        info.entry = Packet.GetUint32();
 
-        if (Info.Entry == 0)
-            return Info;
+        if (info.entry == 0)
+            return info;
 
-        Info.ModelId = Packet.GetUint16();
-        Info.UnknownId = Packet.GetUint16();
-        Info.UnknownEntry = Packet.GetUint32();
-        Info.UnknownText = Packet.GetPascalString();
+        info.ModelId = Packet.GetUint16();
+        info.UnknownId = Packet.GetUint16();
+        info.UnknownEntry = Packet.GetUint32();
+        info.UnknownText = Packet.GetPascalString();
 
-        Info.SlotId = Packet.GetUint16();
-        Info.Type = Packet.GetUint8();
-        Info.MinRank = Packet.GetUint8();
+        info.SlotId = Packet.GetUint16();
+        info.Type = Packet.GetUint8();
+        info.MinRank = Packet.GetUint8();
         Packet.GetUint8();
-        Info.MinRenown = Packet.GetUint8();
+        info.MinRenown = Packet.GetUint8();
         Packet.Skip(2);
-        Info.Rarity = Packet.GetUint8();
-        Info.Bind = Packet.GetUint8();
-        Info.Race = Packet.GetUint8();
-        Info.Career = Packet.GetUint32();
+        info.Rarity = Packet.GetUint8();
+        info.Bind = Packet.GetUint8();
+        info.Race = Packet.GetUint8();
+        info.Career = Packet.GetUint32();
 
         UInt32 ObjectPrice = Packet.GetUint32(); /// ?
         if (ObjectPrice != 0)
             Packet.Skip(2);
 
-        Info.Price = Packet.GetUint32();
+        info.Price = Packet.GetUint32();
         Packet.GetUint32(); // Count / MaxCount
         Packet.GetUint32(); // ?
-        Info.Skill = Packet.GetUint32();
-        Info.Dps = Packet.GetUint16();
-        Info.Speed = Packet.GetUint16();
-        Info.Name = Packet.GetPascalString();
+        info.Skill = Packet.GetUint32();
+        info.Dps = Packet.GetUint16();
+        info.Speed = Packet.GetUint16();
+        info.Name = Packet.GetPascalString();
 
         int TempCount = Packet.GetUint8();
-        Info.Stats = new List<ItemStat>(TempCount);
+        info.Stats = new List<ItemStat>(TempCount);
         for (int i = 0; i < TempCount; ++i)
         {
             ItemStat Stat = new ItemStat();
             Stat.Type = Packet.GetUint8();
             Stat.Count = Packet.GetUint16();
             Packet.Skip(5);
-            Info.Stats.Add(Stat);
+            info.Stats.Add(Stat);
         }
 
         TempCount = Packet.GetUint8(); // Equip Effects
@@ -416,37 +1032,37 @@ public struct ItemTalisman
         }
 
         TempCount = Packet.GetUint8();
-        Info.Spells = new List<ItemSpells>(TempCount);
+        info.Spells = new List<ItemSpells>(TempCount);
         for (int i = 0; i < TempCount; ++i)
         {
             ItemSpells Spell = new ItemSpells();
-            Spell.Entry = Packet.GetUint32();
+            Spell.entry = Packet.GetUint32();
             Spell.X = Packet.GetUint16();
             Spell.Y = Packet.GetUint16();
-            Info.Spells.Add(Spell);
+            info.Spells.Add(Spell);
             
         }
 
         TempCount = Packet.GetUint8();
-        Info.Artisanas = new List<ItemArtisana>(TempCount);
+        info.Artisanas = new List<ItemArtisana>(TempCount);
         for (int i = 0; i < TempCount; ++i)
         {
             ItemArtisana Art = new ItemArtisana();
             Art.Unk1 = Packet.GetUint8();
             Art.Unk2 = Packet.GetUint8();
             Art.Unk3 = Packet.GetUint8();
-            Info.Artisanas.Add(Art);
+            info.Artisanas.Add(Art);
         }
 
         Packet.GetUint8();
 
         TempCount = Packet.GetUint8();
-        Info.TalismanSlots = new List<ItemTalisman>(TempCount);
+        info.TalismanSlots = new List<ItemTalisman>(TempCount);
         for (int i = 0; i < TempCount; ++i)
         {
             ItemTalisman Talisman = new ItemTalisman();
-            Talisman.Entry = Packet.GetUint32();
-            if (Talisman.Entry != 0)
+            Talisman.entry = Packet.GetUint32();
+            if (Talisman.entry != 0)
             {
                 Talisman.Unk = Packet.GetUint16();
                 Talisman.Name = Packet.GetPascalString();
@@ -455,12 +1071,12 @@ public struct ItemTalisman
             else
                 Talisman.Name = "";
 
-            Info.TalismanSlots.Add(Talisman);
+            info.TalismanSlots.Add(Talisman);
         }
 
-        Info.Description = Packet.GetPascalString();
+        info.Description = Packet.GetPascalString();
 
         Packet.Skip(27); // Culture, recipian , soil, etc...
-        return Info;
+        return info;
     }*/
 }

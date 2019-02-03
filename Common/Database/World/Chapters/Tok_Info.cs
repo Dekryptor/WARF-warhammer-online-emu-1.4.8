@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,29 +24,35 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "tok_infos", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "tok_infos", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Tok_Info : DataObject
     {
-        [PrimaryKey()]
-        public ushort Entry;
+        [PrimaryKey]
+        public ushort Entry { get; set; }
 
         [DataElement(Varchar = 255)]
-        public string Name;
+        public string Name { get; set; }
 
         [DataElement()]
-        public uint Xp;
+        public uint Xp { get; set; }
 
         [DataElement()]
-        public uint Section;
+        public uint Section { get; set; }
 
         [DataElement()]
-        public uint Index;
+        public uint Index { get; set; }
 
         [DataElement()]
-        public uint Flag;
+        public uint Flag { get; set; }
 
         [DataElement(Varchar = 255)]
-        public string EventName;
+        public string EventName { get; set; }
+
+        [DataElement()]
+        public uint Rewards { get; set; }
+
+        [DataElement()]
+        public byte Realm { get; set; }
     }
 }

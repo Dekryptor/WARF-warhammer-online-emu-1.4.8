@@ -1,168 +1,202 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 
 using FrameWork;
 
 namespace Common
 {
-    // Valeur Fixe d'un character
-    [DataTable(PreCache = false, TableName = "characters", DatabaseName = "Characters")]
+    // Fixed value of a character
+    [DataTable(PreCache = false, TableName = "characters", DatabaseName = "Characters", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Character : DataObject
     {
-        private UInt32 _CharacterId;
-        private string _Name;
-        private int _RealmId;
-        private int _AccountId;
-        private byte _SlotId;
-        private byte _ModelId;
-        private byte _Career;
-        private byte _CareerLine;
-        private byte _Realm;
-        private int _HeldLeft;
-        private byte _Race;
-        private byte[] _Traits;
-        private byte _Sex;
+        private uint _characterId;
+        private string _name;
+        private string _surname;
+        private int _realmId;
+        private int _accountId;
+        private byte _slotId;
+        private byte _modelId;
+        private byte _career;
+        private byte _careerLine;
+        private byte _realm;
+        private int _heldLeft;
+        private byte _race;
+        private byte[] _traits;
+        private byte _sex;
         public bool FirstConnect;
+        private bool _anonymous;
+        private bool _hidden;
+        private string _oldName;
+        private string _petName;
+        private ushort _petModel;
 
-        public Character()
-            : base()
+        public uint CareerFlags => CareerLine != 0 ? (uint)1 << (_careerLine - 1) : 0;
+
+        [PrimaryKey]
+        public uint CharacterId
         {
-
+            get { return _characterId; }
+            set { _characterId = value; Dirty = true; }
         }
 
-        [DataElement(AllowDbNull=false)]
-        public UInt32 CharacterId
-        {
-            get { return _CharacterId; }
-            set { _CharacterId = value; Dirty = true; }
-        }
-
-        [DataElement(Unique = true,AllowDbNull = false,Varchar=255)]
+        [DataElement(Unique = true,AllowDbNull = false,Varchar=24)]
         public string Name
         {
-            get { return _Name; }
-            set { _Name = value; Dirty = true; }
+            get { return _name; }
+            set { _name = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false, Varchar = 24)]
+        public string Surname
+        {
+            get { return _surname; }
+            set { _surname = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public int RealmId
         {
-            get { return _RealmId; }
-            set { _RealmId = value; Dirty = true; }
+            get { return _realmId; }
+            set { _realmId = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public int AccountId
         {
-            get { return _AccountId; }
-            set { _AccountId = value; Dirty = true; }
+            get { return _accountId; }
+            set { _accountId = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public byte SlotId
         {
-            get { return _SlotId; }
-            set { _SlotId = value; Dirty = true; }
+            get { return _slotId; }
+            set { _slotId = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public byte ModelId
         {
-            get { return _ModelId; }
-            set { _ModelId = value; Dirty = true; }
+            get { return _modelId; }
+            set { _modelId = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public byte Career
         {
-            get { return _Career; }
-            set { _Career = value; Dirty = true; }
+            get { return _career; }
+            set { _career = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public byte CareerLine
         {
-            get { return _CareerLine; }
-            set { _CareerLine = value; Dirty = true; }
+            get { return _careerLine; }
+            set { _careerLine = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public byte Realm
         {
-            get { return _Realm; }
-            set { _Realm = value; Dirty = true; }
+            get { return _realm; }
+            set { _realm = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public int HeldLeft
         {
-            get { return _HeldLeft; }
-            set { _HeldLeft = value; Dirty = true; }
+            get { return _heldLeft; }
+            set { _heldLeft = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public byte Race
         {
-            get { return _Race; }
-            set { _Race = value; Dirty = true; }
+            get { return _race; }
+            set { _race = value; Dirty = true; }
         }
 
         [DataElement(AllowDbNull = false)]
         public string Traits
         {
-            get { return System.Text.UTF8Encoding.UTF8.GetString(_Traits); }
+            get { return Encoding.UTF8.GetString(_traits); }
             set 
             {
-                _Traits = System.Text.UTF8Encoding.UTF8.GetBytes(value); Dirty = true; 
+                _traits = Encoding.UTF8.GetBytes(value); Dirty = true; 
             }
         }
 
         [DataElement(AllowDbNull = false)]
         public byte Sex
         {
-            get { return _Sex; }
-            set { _Sex = value; Dirty = true; }
+            get { return _sex; }
+            set { _sex = value; Dirty = true; }
         }
 
-        [DataElement(AllowDbNull=false)]
-        public byte Online;
+        [DataElement(AllowDbNull = false)]
+        public bool Anonymous
+        {
+            get { return _anonymous; }
+            set { _anonymous = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public bool Hidden
+        {
+            get { return _hidden; }
+            set { _hidden = value; Dirty = true; }
+        }
 
         public byte[] bTraits
         {
-            get { return _Traits; }
-            set { _Traits = value; }
+            get { return _traits; }
+            set { _traits = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false, Varchar = 24)]
+        public string OldName
+        {
+            get { return _oldName; }
+            set { _oldName = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false, Varchar = 24)]
+        public string PetName
+        {
+            get { return _petName; }
+            set { _petName = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public ushort PetModel
+        {
+            get { return _petModel; }
+            set { _petModel = value; Dirty = true; }
         }
 
         public Character_value Value;
+
+        public CharacterClientData ClientData;
 
         public List<Character_social> Socials;
 
         public List<Character_tok> Toks;
 
+        public List<Character_tok_kills> TokKills;
+
         public List<Character_quest> Quests;
 
         public List<Characters_influence> Influences;
+
+        public List<Characters_bag_pools> Bag_Pools;
+
+        public List<Character_mail> Mails;
+
+        public List<CharacterSavedBuff> Buffs;
+
+        public string TempFirstName; //name to be shown to everyone (used for world events)
+        public string TempLastName; //(used for world events)
     }
 }

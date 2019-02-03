@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -26,39 +7,67 @@ using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "pquest_objectives", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "pquest_objectives", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class PQuest_Objective : DataObject
     {
-        [PrimaryKey(AutoIncrement=true)]
-        public UInt32 Guid;
-
-        [DataElement(AllowDbNull=false)]
-        public UInt32 Entry;
-
-        [DataElement(Varchar=255, AllowDbNull = false)]
-        public string StageName;
+        [PrimaryKey(AutoIncrement = true)]
+        public uint Guid { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public byte Type;
+        public uint Entry { get; set; }
 
         [DataElement(Varchar = 255, AllowDbNull = false)]
-        public string Objective;
+        public string StageName { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public UInt16 Count;
-
-        [DataElement(AllowDbNull = false)]
-        public string Description;
+        public byte Type { get; set; }
 
         [DataElement(Varchar = 255, AllowDbNull = false)]
-        public string ObjectId;
+        public string Objective { get; set; }
 
         [DataElement(AllowDbNull = false)]
-        public UInt32 TokCompleted;
+        public ushort Count { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public ushort Time { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public string Description { get; set; }
+
+        [DataElement(Varchar = 255, AllowDbNull = false)]
+        public string ObjectId { get; set; }
+
+        [DataElement(Varchar = 255, AllowDbNull = true)]
+        public string ObjectId2 { get; set; }
+
+        [DataElement(Varchar = 255, AllowDbNull = true)]
+        public string ObjectId3 { get; set; }
+
+        [DataElement(Varchar = 255, AllowDbNull = true)]
+        public string ObjectId4 { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public uint TokCompleted { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public byte NoRespawn { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public uint SoundId { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public uint SoundDelay { get; set; }
+
+        [DataElement(AllowDbNull = false)]
+        public uint SoundIteration { get; set; }
 
         public PQuest_Info Quest;
+
         public Item_Info Item;
         public Creature_proto Creature;
+        public GameObject_proto GameObject = null;
+
+        public List<PQuest_Spawn> Spawns = new List<PQuest_Spawn>();
     }
 }

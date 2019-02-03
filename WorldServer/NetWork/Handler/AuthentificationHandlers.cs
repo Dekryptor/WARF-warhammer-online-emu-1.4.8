@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -29,23 +10,39 @@ namespace WorldServer
 {
     public class AuthentificationHandlers : IPacketHandler
     {
-        [PacketHandlerAttribute(PacketHandlerType.TCP, (int)Opcodes.F_CONNECT, 0, "onConnect")]
-        static public void F_CONNECT(BaseClient client, PacketIn packet)
+        [PacketHandler(PacketHandlerType.TCP, (int)Opcodes.F_CONNECT, 0, "onConnect")]
+        public static void F_CONNECT(BaseClient client, PacketIn packet)
         {
-            GameClient cclient = client as GameClient;
+            Log.Success("F_CONNECT", "Entering F_CONNECT " + client.Id.ToString() + " " + packet.Opcode.ToString() );
+            GameClient cclient = (GameClient) client;
 
             packet.Skip(8);
-            UInt32 Tag = packet.GetUint32();
+            uint Tag = packet.GetUint32();
             string Token = packet.GetString(80);
             packet.Skip(21);
             string Username = packet.GetString(23);
 
             // TODO
             AuthResult Result = Program.AcctMgr.CheckToken(Username, Token);
-            if (Result != AuthResult.AUTH_SUCCESS)
+#if DEBUG
+            Result = AuthResult.AUTH_SUCCESS;
+#endif
+
+            if (Result == AuthResult.AUTH_ACCT_SUSPENDED)
             {
-                Log.Error("F_CONNECT", "Invalid Token =" + Username);
-                cclient.Disconnect();
+                Log.Error("F_CONNECT", "Banned Account =" + Username);
+                cclient.Disconnect("Banned account");
+            }
+            else if (Result != AuthResult.AUTH_SUCCESS)
+            {
+                Log.Error("F_CONNECT", "Invalid Token =" + Username + " " + Result);
+
+                // Kick people who spam the god damn button for 5 minutes straight before they clock on.
+                PacketOut Out = new PacketOut((byte)Opcodes.F_PLAYER_QUIT, 4);
+                Out.WriteHexStringBytes("01000000");
+                cclient.SendPacket(Out);
+
+                cclient.Disconnect("Invalid token");
             }
             else
             {
@@ -53,22 +50,37 @@ namespace WorldServer
                 if (cclient._Account == null)
                 {
                     Log.Error("F_CONNECT", "Invalid Account =" + Username);
-                    cclient.Disconnect();
+                    cclient.Disconnect("Invalid account");
                 }
                 else
                 {
-                    //Log.Success("F_CONNECT", "MeId=" + cclient.Id);
+                    Log.Success("F_CONNECT", "MeId=" + cclient.Id);
 
-                    GameClient Other = (cclient.Server as TCPServer).GetClientByAccount(cclient, cclient._Account.AccountId);
+                    GameClient Other = ((TCPServer) cclient.Server).GetClientByAccount(cclient, cclient._Account.AccountId);
                     if (Other != null)
-                        Other.Disconnect();
+                        Other.Disconnect("Failed to get GameClient for account");
+
+                    // Check if ip is banned. (they may have been just banned so launcher server wouldnt have picked it up)
+                    if(!Program.AcctMgr.CheckIp(cclient.GetIp().Split(':')[0]))
+                    {
+                        Log.Error("F_CONNECT", "Banned IP =" + Username);
+                        cclient.Disconnect("Banned by IP");
+                    }
+
+                    // Load characters before connection instead of later on
+                    CharMgr.LoadCharacters(cclient._Account.AccountId);
 
                     {
-                        PacketOut Out = new PacketOut((byte)Opcodes.S_CONNECTED);
+                        cclient.PacketLog = cclient._Account.PacketLog;
+
+                        PacketOut Out = new PacketOut((byte)Opcodes.S_CONNECTED, 48);
                         Out.WriteUInt32(0);
                         Out.WriteUInt32(Tag);
                         Out.WriteByte(Program.Rm.RealmId);
-                        Out.WriteUInt32(1);
+                        Out.WriteByte(0);
+                        Out.WriteByte(0);
+                        Out.WriteByte(0);
+                        Out.WriteByte(0); // TRANSFER_FLAG (1 - Low population server..free transfers...)
                         Out.WritePascalString(Username);
                         Out.WritePascalString(Program.Rm.Name);
                         Out.WriteByte(0);
@@ -79,19 +91,24 @@ namespace WorldServer
             }
         }
 
-        [PacketHandlerAttribute(PacketHandlerType.TCP, (int)Opcodes.F_PING, "onPing")]
-        static public void F_PING(BaseClient client, PacketIn packet)
+        [PacketHandler(PacketHandlerType.TCP, (int)Opcodes.F_PING, "onPing")]
+        public static void F_PING(BaseClient client, PacketIn packet)
         {
             GameClient cclient = client as GameClient;
 
             uint Timestamp = packet.GetUint32();
 
-            PacketOut Out = new PacketOut((byte)Opcodes.S_PONG);
+            PacketOut Out = new PacketOut((byte)Opcodes.S_PONG, 20);
             Out.WriteUInt32(Timestamp);
-            Out.WriteUInt64((UInt64)TCPManager.GetTimeStamp());
-            Out.WriteUInt32((UInt32)(cclient.SequenceID+1));
+            Out.WriteUInt64((ulong)TCPManager.GetTimeStamp());
+            Out.WriteUInt32((uint)(cclient.SequenceID+1));
             Out.WriteUInt32(0);
             cclient.SendPacket(Out);
+
+            Player plr = cclient.Plr;
+
+            if (plr != null)
+                plr.LastKeepAliveTime = TCPManager.GetTimeStampMS();
         }
 
         public struct sEncrypt
@@ -99,42 +116,43 @@ namespace WorldServer
             public byte cipher, application, major, minor, revision, unk1;
         };
 
-        [PacketHandlerAttribute(PacketHandlerType.TCP, (int)Opcodes.F_ENCRYPTKEY, "onEncryptKey")]
-        static public void F_ENCRYPTKEY(BaseClient client, PacketIn packet)
+        [PacketHandler(PacketHandlerType.TCP, (int)Opcodes.F_ENCRYPTKEY, "onEncryptKey")]
+        public static void F_ENCRYPTKEY(BaseClient client, PacketIn packet)
         {
-            GameClient cclient = client as GameClient;
+            GameClient cclient = (GameClient) client;
 
-            sEncrypt Result = BaseClient.ByteToType<sEncrypt>(packet);
+            sEncrypt result = BaseClient.ByteToType<sEncrypt>(packet);
 
-            string Version = Result.major + "." + Result.minor + "." + Result.revision;
+            string version = result.major + "." + result.minor + "." + result.revision;
 
-            Log.Debug("F_ENCRYPTKEY", "Version = " + Version);
+            Log.Debug("F_ENCRYPTKEY", "Version = " + version);
+            // Should be a connection to the remote client.
+            //Log.Debug("F_ENCRYPTKEY", "Client Ip = " + cclient.);
 
-            if (Result.cipher == 0)
+            if (result.cipher == 0)
             {
-                PacketOut Out = new PacketOut((byte)Opcodes.F_RECEIVE_ENCRYPTKEY);
+                PacketOut Out = new PacketOut((byte)Opcodes.F_RECEIVE_ENCRYPTKEY, 1);
                 Out.WriteByte(1);
                 cclient.SendPacket(Out);
             }
-            else if (Result.cipher == 1)
+            else if (result.cipher == 1)
             {
-                byte[] EncryptKey = new byte[256];
-                packet.Read(EncryptKey, 0, EncryptKey.Length);
-                cclient.AddCrypt("RC4Crypto", new CryptKey(EncryptKey), new CryptKey(EncryptKey));
+                byte[] encryptKey = new byte[256];
+                packet.Read(encryptKey, 0, encryptKey.Length);
+                cclient.AddCrypt("RC4Crypto", new CryptKey(encryptKey), new CryptKey(encryptKey));
             }
         }
 
-        [PacketHandlerAttribute(PacketHandlerType.TCP, (int)Opcodes.F_DISCONNECT, 0,"onDisconnect")]
-        static public void F_DISCONNECT(BaseClient client, PacketIn packet)
+        [PacketHandler(PacketHandlerType.TCP, (int)Opcodes.F_DISCONNECT, 0,"onDisconnect")]
+        public static void F_DISCONNECT(BaseClient client, PacketIn packet)
         {
-            GameClient cclient = client as GameClient;
+            GameClient cclient = (GameClient) client;
 
             if (cclient._Account == null)
                 return;
 
-            GameClient OtherClient = (client.Server as TCPServer).GetClientByAccount(cclient, cclient._Account.AccountId);
-            if (OtherClient != null)
-                OtherClient.Disconnect();
+            TCPServer server = (TCPServer) client.Server;
+            server.GetClientByAccount(cclient, cclient._Account.AccountId)?.Disconnect("F_DISCONNECT"); ;
         }
     }
 }

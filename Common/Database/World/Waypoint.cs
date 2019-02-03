@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -26,63 +7,149 @@ using FrameWork;
 
 namespace Common
 {
-    // Valeur Fixe d'un character
-    [DataTable(PreCache = false, TableName = "waypoints", DatabaseName = "World")]
+    // Fixed value of a character
+    [DataTable(PreCache = false, TableName = "waypoints", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Waypoint : DataObject
     {
-        static public byte Loop = 0;
-        static public byte StartToEnd = 1;
-        static public byte Random = 2;
+        public static byte Loop = 0;
+        public static byte StartToEnd = 1;
+        public static byte Random = 2;
 
-        [DataElement()]
-        public uint GUID;
+        private uint _GUID;
+        private uint _CreatureSpawnGUID;
+        private uint _GameObjectSpawnGUID;
+        private ushort _X;
+        private ushort _Y;
+        private ushort _Z;
+        private ushort _O;
+        private ushort _Speed = 100;
+        private byte _EmoteOnStart;
+        private byte _EmoteOnEnd;
+        private uint _WaitAtEndMS;
+        private ushort _EquipOnStart;
+        private ushort _EquipOnEnd;
+        private string _TextOnStart;
+        private string _TextOnEnd;
+        private uint _NextWaypointGUID;
 
-        [DataElement()]
-        public uint CreatureSpawnGUID;
+        [PrimaryKey(AutoIncrement = true)]
+        public uint GUID
+        {
+            get { return _GUID; }
+            set { _GUID = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public uint GameObjectSpawnGUID;
+        [DataElement(AllowDbNull = false)]
+        public uint CreatureSpawnGUID
+        {
+            get { return _CreatureSpawnGUID; }
+            set { _CreatureSpawnGUID = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public ushort X;
+        [DataElement(AllowDbNull = false)]
+        public uint GameObjectSpawnGUID
+        {
+            get { return _GameObjectSpawnGUID; }
+            set { _GameObjectSpawnGUID = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public ushort Y;
+        [DataElement(AllowDbNull = false)]
+        public ushort X
+        {
+            get { return _X; }
+            set { _X = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public ushort Z;
+        [DataElement(AllowDbNull = false)]
+        public ushort Y
+        {
+            get { return _Y; }
+            set { _Y = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public ushort O;
+        [DataElement(AllowDbNull = false)]
+        public ushort Z
+        {
+            get { return _Z; }
+            set { _Z = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public ushort Speed = 100;
+        [DataElement(AllowDbNull = true)]
+        public ushort O
+        {
+            get { return _O; }
+            set { _O = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public byte EmoteOnStart;
+        [DataElement(AllowDbNull = false)]
+        public ushort Speed
+        {
+            get { return _Speed; }
+            set { _Speed = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public byte EmoteOnEnd;
+        [DataElement(AllowDbNull = true)]
+        public byte EmoteOnStart
+        {
+            get { return _EmoteOnStart; }
+            set { _EmoteOnStart = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public uint WaitAtEndMS;
+        [DataElement(AllowDbNull = true)]
+        public byte EmoteOnEnd
+        {
+            get { return _EmoteOnEnd; }
+            set { _EmoteOnEnd = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public ushort EquipOnStart;
+        [DataElement(AllowDbNull = true)]
+        public uint WaitAtEndMS
+        {
+            get { return _WaitAtEndMS; }
+            set { _WaitAtEndMS = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public ushort EquipOnEnd;
+        [DataElement(AllowDbNull = true)]
+        public ushort EquipOnStart
+        {
+            get { return _EquipOnStart; }
+            set { _EquipOnStart = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public string TextOnStart;
+        [DataElement(AllowDbNull = true)]
+        public ushort EquipOnEnd
+        {
+            get { return _EquipOnEnd; }
+            set { _EquipOnEnd = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public string TextOnEnd;
+        [DataElement(AllowDbNull = true)]
+        public string TextOnStart
+        {
+            get { return _TextOnStart; }
+            set { _TextOnStart = value; Dirty = true; }
+        }
 
-        [DataElement()]
-        public UInt32 NextWaypointGUID;
+        [DataElement(AllowDbNull = true)]
+        public string TextOnEnd
+        {
+            get { return _TextOnEnd; }
+            set { _TextOnEnd = value; Dirty = true; }
+        }
+
+        [DataElement(AllowDbNull = false)]
+        public uint NextWaypointGUID
+        {
+            get { return _NextWaypointGUID; }
+            set { _NextWaypointGUID = value; Dirty = true; }
+        }
 
         public Waypoint NextWaypoint;
+
+        public override string ToString()
+        {
+            return GUID + ":" + CreatureSpawnGUID + ":" + GameObjectSpawnGUID + ":" + X + "," + Y + "," + Z + "," + O + "," + Speed + "," + EmoteOnStart + "," + EmoteOnEnd + "," + WaitAtEndMS + "," + EquipOnStart + "," + EquipOnEnd + "," + TextOnStart + "," + TextOnEnd + "," + NextWaypointGUID + "," + NextWaypoint;
+        }
     }
 }

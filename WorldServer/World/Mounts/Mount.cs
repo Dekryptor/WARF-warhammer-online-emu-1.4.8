@@ -19,6 +19,7 @@ namespace WorldServer
             Owner.EvtInterface.AddEventNotify(EventName.ON_RECEIVE_DAMAGE, this.OnTakeDamage);
             Owner.EvtInterface.AddEventNotify(EventName.ON_DEAL_DAMAGE, this.OnDealDamage);
             Owner.EvtInterface.AddEventNotify(EventName.ON_START_CASTING, this.OnStartCast);
+            Owner.EvtInterface.AddEventNotify(EventName.ON_REMOVE_FROM_WORLD, this.OnRemoveFromWorld);
         }
 
         public void Stop()
@@ -66,8 +67,12 @@ namespace WorldServer
             if (CurrentMountInfo == null)
                 Out.WriteUInt32(0);
             else
-                Out.WriteUInt32(CurrentMountInfo.Entry);
+            {
+                Out.WriteInt16((short)CurrentMountInfo.Entry);
+                Out.WriteByte(0);
+                Out.WriteByte(0);
 
+            }
             Out.Fill(0, 14);
 
             if (Plr == null)
@@ -78,7 +83,7 @@ namespace WorldServer
 
         public bool OnStartCast(Object Obj, object Args)
         {
-            if ((Args as Ability).Info.Entry == 245)
+            if ((Args as OldAbility).Info.Entry == 245)
                 return false;
 
             UnMount();
@@ -92,6 +97,12 @@ namespace WorldServer
         }
 
         public bool OnDealDamage(Object Obj, object Args)
+        {
+            UnMount();
+            return false;
+        }
+
+        public bool OnRemoveFromWorld(Object Obj, object Args)
         {
             UnMount();
             return false;

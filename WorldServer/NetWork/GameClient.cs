@@ -1,22 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
+﻿
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -25,6 +7,7 @@ using System.IO;
 
 using Common;
 using FrameWork;
+using System.Threading;
 
 public enum eClientState
 {
@@ -34,7 +17,7 @@ public enum eClientState
     WorldEnter = 0x03,
     Playing = 0x04,
     Linkdead = 0x05,
-    Disconnected = 0x06,
+    Disconnected = 0x06
 } ;
 
 namespace WorldServer
@@ -43,6 +26,18 @@ namespace WorldServer
     {
         public Account _Account = null;
         public Player Plr = null;
+        private Thread _logThread = null;
+        private List<string> _packetLog = new List<string>();
+
+        private CircularBuffer<object> _pLogBuf = new CircularBuffer<object>(100);
+
+        public CircularBuffer<object> PLogBuf
+        {
+            get
+            {
+                return _pLogBuf;
+            }
+        }
 
         public GameClient(TCPManager srv)
             : base(srv)
@@ -52,14 +47,35 @@ namespace WorldServer
 
         public override void OnConnect()
         {
-            Log.Debug("GameClient", "Connexion " + GetIp);
+            Log.Debug("WorldServer..Connection", GetIp());
             State = (int)eClientState.Connecting;
         }
-        public override void OnDisconnect()
+        public override void OnDisconnect(string reason)
         {
-            Log.Success("GameClient", "Deconnexion " + GetIp + ",Id="+Id);
+            string ipString = GetIp();
+
+            if (ipString == "disconnected")
+                ipString = "Disconnected client";
+
+            Log.Debug($"{ _Account?.Username ?? "Unknown user" } ({ipString}) disconnected", reason);
+
+            if (_logThread != null)
+            {
+                FlushPacketLog();
+                try
+                {
+                    _logThread.Abort();
+                }
+                catch (Exception)
+                {
+                }
+            }
+
             if (Plr != null)
-                Plr._Client = null;
+            {
+                Plr.Client = null;
+                Plr.Destroy();
+            }
         }
 
         public bool IsPlaying()
@@ -75,80 +91,187 @@ namespace WorldServer
             return _Account != null;
         }
 
-        private ushort Opcode = 0;
-        private long PacketSize = 0;
-        public bool ReadingData = false;
-        public UInt16 SequenceID,SessionID,Unk1;
-        public byte Unk2;
-        public PacketIn packet = null;
+        private ushort _opcode;
+        private long _packetSize;
 
-        protected override void OnReceive(byte[] bytes)
+        public bool ReadingData;
+        public ushort SequenceID,SessionID,Unk1;
+        public byte Unk2;
+
+        private void LogInPacket(PacketIn packet)
         {
-            PacketIn _Packet = new PacketIn(bytes, 0, bytes.Length);
-            packet = _Packet;
+            if (_logThread == null)
+            {
+                _logThread = new Thread(new ThreadStart(PacketLogThread));
+                _logThread.Start();
+            }
+
+            lock(_packetLog)
+            {
+                _packetLog.Add(Utils.ToLogHexString((byte)packet.Opcode, false, packet.ToArray()));
+            }
+        }
+
+        private void LogOutPacket(PacketOut packet)
+        {
+            if (_logThread == null)
+            {
+                _logThread = new Thread(new ThreadStart(PacketLogThread));
+                _logThread.Start();
+            }
+
+            lock (_packetLog)
+            {
+                _packetLog.Add(Utils.ToLogHexString((byte)packet.Opcode, true, packet.ToArray()));
+            }
+        }
+
+        private void PacketLogThread()
+        {
+            while (true)
+            {
+                FlushPacketLog();
+                if (!Socket.Connected)
+                    return;
+
+                Thread.Sleep(5000);
+            }
+        }
+        private void FlushPacketLog()
+        {
+            var packets = new List<String>();
+            lock(_packetLog)
+            {
+                packets = _packetLog.ToList();
+                _packetLog.Clear();
+            }
+
+            if (_Account != null)
+            {
+                if (!Directory.Exists("PacketLogs"))
+                    Directory.CreateDirectory("PacketLogs");
+
+                string file = Path.Combine("PacketLogs", _Account.Username + ".txt");
+                StringBuilder log = new StringBuilder();
+                foreach (var packet in packets)
+                    log.AppendLine(packet);
+
+                File.AppendAllText(file, log.ToString());
+            }
+        }
+
+        public override void SendPacket(PacketOut packet)
+        {
+            if(PacketLog)
+                LogOutPacket(packet);
+
+            PLogBuf.Enqueue(packet);
+
+            base.SendPacket(packet);
+        }
+
+        public override bool SendPacketNoBlock(PacketOut packet)
+        {
+            if (PacketLog)
+                LogOutPacket(packet);
+
+            PLogBuf.Enqueue(packet);
+
+
+            return base.SendPacketNoBlock(packet);
+        }
+
+        public override bool SendPacketsNoBlock(List<PacketOut> packetList, int lengthPerSend)
+        {
+            foreach (PacketOut packet in packetList)
+            {
+                if (PacketLog)
+                    LogOutPacket(packet);
+
+                PLogBuf.Enqueue(packet);
+            }
+
+            return base.SendPacketsNoBlock(packetList, lengthPerSend);
+        }
+
+        protected override void OnReceive(byte[] packetBuffer)
+        {
+            // Wrap the input stream in a PacketIn
+            Log.Error("HandlePacket", $"Packet...{packetBuffer.Length}");
+            PacketIn inStream = new PacketIn(packetBuffer, 0, packetBuffer.Length, true, true);
 
             lock (this)
             {
-                long PacketLength = packet.Length;
+                long bufferLength = inStream.Length;
 
-                while (PacketLength > 0)
+                while (bufferLength > 0)
                 {
-                    // Lecture du Header
+                    // Read the header
                     if (!ReadingData)
                     {
-                        if (PacketLength < 2)
+                        if (bufferLength < 2)
                         {
-                            Log.Error("OnReceive", "Header invalide " + PacketLength);
-                            break;
+                            Log.Debug("OnReceive", "Invalid header (buffer length " + bufferLength + ")");
+                            return;
                         }
 
-                        PacketSize = packet.GetUint16();
-                        PacketLength -= 2;
+                        _packetSize = inStream.GetUint16();
+                        bufferLength -= 2;
 
-                        if (PacketLength < PacketSize + 10)
-                            break;
+                        if (bufferLength < _packetSize + 10)
+                            return;
 
-                        packet.Size = (ulong)PacketSize+10;
-                        packet = DeCrypt(packet);
+                        inStream.Size = (ulong)_packetSize+10;
+                        Decrypt(inStream);
 
-                        SequenceID = packet.GetUint16();
-                        SessionID = packet.GetUint16();
-                        Unk1 = packet.GetUint16();
-                        Unk2 = packet.GetUint8();
-                        Opcode = packet.GetUint8();
-                        PacketLength -= 8;
+                        SequenceID = inStream.GetUint16();
+                        SessionID = inStream.GetUint16();
+                        Unk1 = inStream.GetUint16();
+                        Unk2 = inStream.GetUint8();
+                        _opcode = inStream.GetUint8();
+                        bufferLength -= 8;
 
-                        if (PacketLength > PacketSize + 2)
-                        {
-                            Log.Debug("OnReceive", "Packet contain multiple opcodes " + PacketLength + ">" + (PacketSize + 2));
-                        }
+                        #if DEBUG
+                        if (bufferLength > _packetSize + 2)
+                            Log.Debug("OnReceive", "Packet contains multiple opcodes " + bufferLength + ">" + (_packetSize + 2));
+                        #endif
+
                         ReadingData = true;
                     }
                     else
                     {
                         ReadingData = false;
 
-                        if (PacketLength >= PacketSize + 2)
+                        if (bufferLength >= _packetSize + 2)
                         {
-                            byte[] BPack = new byte[PacketSize+2];
-                            packet.Read(BPack, 0, (int)(PacketSize + 2));
+                            byte[] bPack = new byte[_packetSize+2];
+                            inStream.Read(bPack, 0, (int)(_packetSize + 2));
 
-                            PacketIn Packet = new PacketIn(BPack, 0, BPack.Length);
-                            Packet.Opcode = Opcode;
-                            Packet.Size = (ulong)PacketSize;
+                            PacketIn packet = new PacketIn(bPack, 0, bPack.Length)
+                            {
+                                Opcode = _opcode,
+                                Size = (ulong) _packetSize
+                            };
+
+                            if (PacketLog)
+                            {
+                                LogInPacket(packet);
+                            }
+
+                            PLogBuf.Enqueue(packet);
 
                             if (Plr != null && Plr.IsInWorld())
-                                Plr.ReceivePacket(Packet);
+                                Plr.ReceivePacket(packet);
                             else
-                                Server.HandlePacket(this, Packet);
+                                Server.HandlePacket(this, packet);
 
-                            Log.Tcp("PacketSize", BPack, 0, BPack.Length);
+                            Log.Tcp("PacketSize", bPack, 0, bPack.Length);
 
-                            PacketLength -= PacketSize + 2;
+                            bufferLength -= _packetSize + 2;
                         }
                         else
                         {
-                            Log.Error("OnReceive", "La taille du packet est inférieur au total recu :" + PacketLength + "<" + (PacketSize + 2));
+                            Log.Error("OnReceive", "Packet size smaller than total received bytes: " + bufferLength + "<" + (_packetSize + 2));
                             break;
                         }
                     }

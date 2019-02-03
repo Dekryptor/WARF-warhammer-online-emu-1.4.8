@@ -1,23 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -27,16 +8,16 @@ using System.Xml.Serialization;
 
 namespace FrameWork
 {
-    static public class ConfigMgr
+    public static class ConfigMgr
     {
-        static public List<aConfig> _Configs = new List<aConfig>();
+        public static List<aConfig> _Configs = new List<aConfig>();
 
-        static public void LoadConfigs()
+        public static void LoadConfigs()
         {
             if (_Configs.Count > 0)
                 return;
 
-            Log.Debug("ConfigMgr", "Loading Config files");
+            Log.Debug("ConfigMgr", "Loading Config files", true);
 
             foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
@@ -55,7 +36,7 @@ namespace FrameWork
 
                     if (ConfigAttribs.Length > 0)
                     {
-                        Log.Debug("ConfigMgr", "Deserializing : " + type.Name);
+                        Log.Debug("ConfigMgr", "Deserializing : " + type.Name, true);
 
                         aConfig Obj = null;
                         XmlSerializer Xml = new XmlSerializer(type);
@@ -81,7 +62,7 @@ namespace FrameWork
                                 }
                                 catch (Exception e)
                                 {
-                                    Log.Error("ConfigMgr", "ConfigMethod Error : " + e.ToString());
+                                    Log.Error("ConfigMgr", "ConfigMethod Error : " + e, true);
                                 }
                             }
                         }
@@ -93,18 +74,19 @@ namespace FrameWork
                         {
                             FirstLoad = true;
                             Obj = Activator.CreateInstance(type) as aConfig;
-                            Log.Info("Config", "A configuration file was created : " + ConfigAttribs[0].FileName);
+                            Log.Info("Config", "A configuration file was created : " + ConfigAttribs[0].FileName, true);
                         }
                         else
                         {
                             Obj = Xml.Deserialize(fs) as aConfig;
                             if (!Obj.IConfiguredTheFile)
-                                Log.Info("Config", ConfigAttribs[0].FileName + " : IConfiguredTheFile value is false.");
+                                Log.Info("Config", ConfigAttribs[0].FileName + " : IConfiguredTheFile value is false.", true);
                         }
 
                         fs.SetLength(0);
                         Xml.Serialize(fs, Obj);
                         fs.Close();
+
 
                         if (FirstLoad || !Obj.IConfiguredTheFile)
                             MustRestart = true;
@@ -118,15 +100,33 @@ namespace FrameWork
 
                 if (MustRestart)
                 {
-                    Log.Info("Config", "You must configure the server before continuing.");
-                    Log.Info("Config", "Press any key to exit");
+                    Log.Info("Config", "You must configure the server before continuing.", true);
+                    Log.Info("Config", "Press any key to exit", true);
                     Console.ReadKey();
                     Environment.Exit(0);
                 }
             }
         }
 
-        static public T GetConfig<T>()
+
+        public static void SaveConfig(aConfig Obj)
+        {
+            Type type = Obj.GetType();
+
+            object[] attrib = type.GetCustomAttributes(typeof(aConfigAttributes), true);
+            if (attrib.Length <= 0)
+                return;
+
+            aConfigAttributes[] ConfigAttribs = (aConfigAttributes[])type.GetCustomAttributes(typeof(aConfigAttributes), true);
+
+            XmlSerializer Xml = new XmlSerializer(type);
+            FileStream fs = new FileStream(ConfigAttribs[0].FileName, FileMode.OpenOrCreate);
+            fs.SetLength(0);
+            Xml.Serialize(fs, Obj);
+            fs.Close();
+        }
+
+        public static T GetConfig<T>()
         {
             aConfig Conf = null;
             Conf = _Configs.Find(info => info.GetType() == typeof(T));

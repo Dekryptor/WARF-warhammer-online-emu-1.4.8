@@ -1,22 +1,4 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
- 
+﻿
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -29,32 +11,18 @@ namespace LobbyServer
 {
     class Program
     {
-        static public LobbyConfigs Config = null;
+        public static LobbyConfigs Config;
 
-        static public RpcClient Client = null;
-        static public TCPServer Server = null;
+        public static RpcClient Client;
+        public static TCPServer Server;
 
-        static public AccountMgr AcctMgr
-        {
-            get
-            {
-                return Client.GetServerObject<AccountMgr>();
-            }
-        }
+        public static AccountMgr AcctMgr => Client.GetServerObject<AccountMgr>();
 
         static void Main(string[] args)
         {
             AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(onError);
 
-            Log.Texte("", "-------------------------------", ConsoleColor.DarkBlue);
-            Log.Texte("", "          _____   _____ ", ConsoleColor.Cyan);
-            Log.Texte("", "    /\\   |  __ \\ / ____|", ConsoleColor.Cyan);
-            Log.Texte("", "   /  \\  | |__) | (___  ", ConsoleColor.Cyan);
-            Log.Texte("", "  / /\\ \\ |  ___/ \\___ \\ ", ConsoleColor.Cyan);
-            Log.Texte("", " / ____ \\| |     ____) |", ConsoleColor.Cyan);
-            Log.Texte("", "/_/    \\_\\_|    |_____/ Warhammer", ConsoleColor.Cyan);
-            Log.Texte("", "http://AllPrivateServer.com", ConsoleColor.DarkCyan);
-            Log.Texte("", "-------------------------------", ConsoleColor.DarkBlue);
+            Log.Texte("", "-------------------- Lobby Server ---------------------", ConsoleColor.DarkRed);
 
             // Loading all configs files
             ConfigMgr.LoadConfigs();
@@ -72,6 +40,12 @@ namespace LobbyServer
                 ConsoleMgr.WaitAndExit(2000);
 
             Server = TCPManager.GetTcp<TCPServer>("LobbyServer");
+
+            
+
+            Log.Debug($"LobbyServer", $"RpcClient on Local Ip {Config.RpcInfo.RpcLocalIp}");
+            Log.Debug($"LobbyServer", $"RpcClient Connect (Start) to {Config.RpcInfo.RpcServerIp}:{ Config.RpcInfo.RpcServerPort}");
+            Log.Debug($"LobbyServer", $"TcpServer on Port {Config.ClientPort}");
 
             ConsoleMgr.Start();
         }

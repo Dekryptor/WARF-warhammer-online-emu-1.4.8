@@ -1,57 +1,49 @@
-﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
-
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Drawing;
+﻿using System;
 
 using FrameWork;
 
 namespace Common
 {
-    [DataTable(PreCache = false, TableName = "zone_areas", DatabaseName = "World")]
+
+    [DataTable(PreCache = false, TableName = "zone_areas", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Zone_Area : DataObject
     {
-        [DataElement()]
-        public UInt16 ZoneId;
+        [PrimaryKey]
+        public ushort ZoneId { get; set; }
 
-        [DataElement()]
-        public UInt16 AreaId;
+        [DataElement]
+        public string AreaName { get; set; }
 
-        [DataElement()]
-        public byte Realm;
+        [DataElement]
+        public ushort AreaId { get; set; }
 
-        [DataElement()]
-        public byte PieceId;
+        [DataElement]
+        public byte Realm { get; set; }
 
-        [DataElement()]
-        public uint InfluenceId;
+        [PrimaryKey]
+        public byte PieceId { get; set; }
 
-        [DataElement()]
-        public ushort TokExploreEntry;
+        [DataElement]
+        public uint OrderInfluenceId { get; set; }
+
+        [DataElement]
+        public uint DestroInfluenceId { get; set; }
+
+        [DataElement]
+        public ushort TokExploreEntry { get; set; }
+
+        [DataElement]
+        public ushort OrderRespawnId { get; set; }
+
+        [DataElement]
+        public ushort DestroRespawnId { get; set; }
+
+        public bool IsRvR => Realm == 0;
 
         public override string ToString()
         {
-            return "[Area] " + AreaId + " PieceId=" + PieceId;
+            return AreaName + " AreaId: " + AreaId + " PieceId: " + PieceId;
         }
     }
 }

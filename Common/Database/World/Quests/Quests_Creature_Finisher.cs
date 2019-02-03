@@ -1,6 +1,4 @@
 ﻿/*
- * Copyright (C) 2013 APS
- *	http://AllPrivateServer.com
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,14 +25,14 @@ using FrameWork;
 namespace Common
 {
     // Valeur Fixe d'un character
-    [DataTable(PreCache = false, TableName = "quests_creature_finisher", DatabaseName = "World")]
+    [DataTable(PreCache = false, TableName = "quests_creature_finisher", DatabaseName = "World", BindMethod = EBindingMethod.StaticBound)]
     [Serializable]
     public class Quest_Creature_Finisher : DataObject
     {
-        [DataElement()]
-        public UInt16 Entry;
+        [PrimaryKey]
+        public ushort Entry { get; set; }
 
         [DataElement()]
-        public uint CreatureID;
+        public uint CreatureID { get; set; }
     }
 }
